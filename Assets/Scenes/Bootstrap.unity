@@ -130,7 +130,7 @@ GameObject:
   - component: {fileID: 262630548}
   - component: {fileID: 262630547}
   m_Layer: 0
-  m_Name: QuickSession Context
+  m_Name: Session Context
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -149,10 +149,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::QuickSessionContext
   _maxPlayers: 4
-  _isPrivate: 0
-  _quickJoinTimeoutSeconds: 3
-  _createLobbyTimeoutSeconds: 3
-  _servicesInitTimeoutSeconds: 3
+  _lobbyPollIntervalSec: 4
+  _heartbeatIntervalSec: 15
+  _relayProtocol: 0
 --- !u!4 &262630548
 Transform:
   m_ObjectHideFlags: 0
@@ -160,6 +159,51 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 262630546}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1311760252
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1311760254}
+  - component: {fileID: 1311760253}
+  m_Layer: 0
+  m_Name: Bootstrap Root
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1311760253
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1311760252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 18926effc21f92842ad330403f55b3e5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BootstrapController
+  _mainMenuSceneName: MainMenu
+--- !u!4 &1311760254
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1311760252}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -179,10 +223,9 @@ GameObject:
   - component: {fileID: 1650860535}
   - component: {fileID: 1650860534}
   - component: {fileID: 1650860533}
-  - component: {fileID: 1650860536}
   - component: {fileID: 1650860537}
   m_Layer: 0
-  m_Name: NetworkRoot
+  m_Name: Network Root
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -276,18 +319,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1650860536
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1650860532}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f42d5f1a7a0c8ee44b9052ce6c27d96f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Bootstrapper
 --- !u!114 &1650860537
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -300,55 +331,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: aa400124b36898d4b8ecfa3838e84434, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ConnectionApprovalHandler
---- !u!1 &1869165063
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1869165065}
-  - component: {fileID: 1869165064}
-  m_Layer: 0
-  m_Name: BootstrapSceneLoader
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1869165064
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1869165063}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: dd32c2a39e51f984ba73ef32fd600e36, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BootstrapSceneLoader
-  _lobbySceneName: MainMenu
---- !u!4 &1869165065
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1869165063}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  _quickSessionContext: {fileID: 262630547}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
+  - {fileID: 1311760254}
   - {fileID: 1650860535}
-  - {fileID: 1869165065}
   - {fileID: 262630548}

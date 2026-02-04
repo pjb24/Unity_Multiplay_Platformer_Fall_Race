@@ -1,5 +1,3 @@
-using System;
-using System.Threading;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
@@ -8,139 +6,114 @@ using UnityEngine.UI;
 
 public sealed class MainMenuUIController : MonoBehaviour
 {
-    [Header("UI")]
+    [Header("UI Refs")]
     [SerializeField] private TMP_InputField _usernameInput;
     [SerializeField] private Button _quickSessionButton;
     [SerializeField] private Button _quitButton;
     [SerializeField] private TMP_Text _statusText;
 
-    [Header("Scene")]
-    [SerializeField] private string _lobbySceneName = "Lobby";
 
-    private CancellationTokenSource _cts;
-
-    private void Awake()
+    private void OnEnable()
     {
-        if (_quickSessionButton == null || _statusText == null)
+        if (_quickSessionButton == null || _quitButton == null || _statusText == null)
         {
-            Debug.LogError("[MainMenuUIController] Missing UI references.");
-            enabled = false;
+            Debug.LogWarning("[MainMenu] UI fallback 발생: some references are missing.");
             return;
         }
 
         _quickSessionButton.onClick.AddListener(OnClickQuickSession);
-
-        if (_quitButton != null)
-            _quitButton.onClick.AddListener(OnClickQuit);
-
-        _cts = new CancellationTokenSource();
+        _quitButton.onClick.AddListener(OnClickQuit);
     }
 
-    private void Start()
+    private void OnDisable()
     {
-        if (QuickSessionContext.Instance == null)
-        {
-            Debug.LogError("[MainMenuUIController] QuickSessionContext.Instance is null. Put QuickSessionContext in Bootstrap scene.");
-            SetStatus("Missing QuickSessionContext");
-            SetInteractable(false);
-            return;
-        }
-
-        string cached = QuickSessionContext.Instance.GetCachedPlayerName();
-        if (_usernameInput != null && !string.IsNullOrWhiteSpace(cached))
-            _usernameInput.text = cached;
-
-        SetStatus("Ready");
-    }
-
-    private void OnDestroy()
-    {
-        if (_quickSessionButton != null)
-            _quickSessionButton.onClick.RemoveListener(OnClickQuickSession);
-
-        if (_quitButton != null)
-            _quitButton.onClick.RemoveListener(OnClickQuit);
-
-        if (_cts != null)
-        {
-            _cts.Cancel();
-            _cts.Dispose();
-            _cts = null;
-        }
+        if (_quickSessionButton != null) _quickSessionButton.onClick.RemoveListener(OnClickQuickSession);
+        if (_quitButton != null) _quitButton.onClick.RemoveListener(OnClickQuit);
     }
 
     private void OnClickQuickSession()
     {
-        if (QuickSessionContext.Instance == null)
-        {
-            Debug.LogError("[MainMenuUIController] QuickSessionContext.Instance is null.");
-            SetStatus("Missing QuickSessionContext");
-            return;
-        }
-
-        if (QuickSessionContext.Instance.IsBusy)
-        {
-            Debug.LogWarning("[MainMenuUIController] QuickSession fallback: busy.");
-            return;
-        }
-
-        _ = RunQuickSessionAsync(_cts.Token);
-    }
-
-    private async Task RunQuickSessionAsync(CancellationToken ct)
-    {
-        SetInteractable(false);
-
-        try
-        {
-            var progress = new Progress<string>(SetStatus);
-
-            string inputName = _usernameInput != null ? _usernameInput.text : null;
-
-            bool ok = await QuickSessionContext.Instance.QuickSessionAsync(inputName, progress, ct);
-            if (!ok)
-            {
-                SetInteractable(true);
-                return;
-            }
-
-            SceneManager.LoadScene(_lobbySceneName, LoadSceneMode.Single);
-        }
-        catch (OperationCanceledException)
-        {
-            Debug.LogWarning("[MainMenuUIController] QuickSession fallback: canceled.");
-            SetStatus("Canceled");
-            SetInteractable(true);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[MainMenuUIController] QuickSession fallback: failed.\n{ex}");
-            SetStatus("Failed. Check console.");
-            SetInteractable(true);
-        }
+        _ = RunQuickSessionAsync();
     }
 
     private void OnClickQuit()
     {
 #if UNITY_EDITOR
-        Debug.LogWarning("[MainMenuUIController] Quit requested (Editor). Stopping play mode.");
         UnityEditor.EditorApplication.isPlaying = false;
 #else
-        Debug.LogWarning("[MainMenuUIController] Quit requested. Application.Quit()");
         Application.Quit();
 #endif
     }
 
-    private void SetInteractable(bool value)
+    private async Task RunQuickSessionAsync()
     {
-        if (_quickSessionButton != null) _quickSessionButton.interactable = value;
-        if (_usernameInput != null) _usernameInput.interactable = value;
-        if (_quitButton != null) _quitButton.interactable = value;
+        if (!TryGetContext(out var ctx)) return;
+
+        string username = GetOrGenerateUsername();
+
+        SetInteractable(false);
+        SetStatus($"QuickSession 시작 중... ({username})");
+
+        // 1) Client Quick Join 우선 시도
+        SetStatus("로비 참가 시도 중...");
+        var joinResult = await ctx.TryJoinAsClientThenEnterGameAsync(username);
+
+        if (joinResult.ok)
+        {
+            SetStatus("Client 참가 성공. Game 로드 중...");
+            return;
+        }
+
+        Debug.LogWarning($"[MainMenu] QuickSession fallback 발생: join attempt failed: {joinResult.failCode} / {joinResult.message}");
+        SetStatus("참가 불가. Host 로비 생성 시도 중...");
+
+        // 2) Join 불가면 Host로 Lobby 생성
+        var hostResult = await ctx.TryStartAsHostThenEnterGameAsync(username);
+
+        if (hostResult.ok)
+        {
+            SetStatus($"Host 생성 성공. JoinCode={hostResult.relayJoinCode} / Game 로드 중...");
+            return;
+        }
+
+        Debug.LogWarning($"[MainMenu] QuickSession fallback 발생: host attempt failed: {hostResult.failCode} / {hostResult.message}");
+        SetStatus($"QuickSession 실패: {hostResult.message}");
+        SetInteractable(true);
+    }
+
+    private bool TryGetContext(out QuickSessionContext ctx)
+    {
+        ctx = QuickSessionContext.Instance;
+        if (ctx == null)
+        {
+            Debug.LogWarning("[MainMenu] UI fallback 발생: QuickSessionContext.Instance is null. Bootstrap DDOL 확인.");
+            SetStatus("세션 컨텍스트가 없다. Bootstrap부터 시작해라.");
+            return false;
+        }
+        return true;
+    }
+
+    private string GetOrGenerateUsername()
+    {
+        string raw = _usernameInput != null ? _usernameInput.text : null;
+        raw = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
+        if (string.IsNullOrEmpty(raw))
+        {
+            // 규칙: 비어있으면 생성 후 사용
+            return $"User{Random.Range(1000, 9999)}";
+        }
+        return raw;
+    }
+
+    private void SetInteractable(bool on)
+    {
+        if (_quickSessionButton != null) _quickSessionButton.interactable = on;
+        if (_quitButton != null) _quitButton.interactable = on;
     }
 
     private void SetStatus(string msg)
     {
-        if (_statusText != null)
-            _statusText.text = msg;
+        if (_statusText != null) _statusText.text = msg;
     }
 }
