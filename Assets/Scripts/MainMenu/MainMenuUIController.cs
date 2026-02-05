@@ -6,13 +6,18 @@ using UnityEngine.UI;
 
 public sealed class MainMenuUIController : MonoBehaviour
 {
+    // ============================
+    // UI Refs (Inspector)
+    // ============================
     [Header("UI Refs")]
     [SerializeField] private TMP_InputField _usernameInput;
     [SerializeField] private Button _quickSessionButton;
     [SerializeField] private Button _quitButton;
     [SerializeField] private TMP_Text _statusText;
 
-
+    // ============================
+    // Unity Messages
+    // ============================
     private void OnEnable()
     {
         if (_quickSessionButton == null || _quitButton == null || _statusText == null)
@@ -31,6 +36,9 @@ public sealed class MainMenuUIController : MonoBehaviour
         if (_quitButton != null) _quitButton.onClick.RemoveListener(OnClickQuit);
     }
 
+    // ============================
+    // UI Callbacks
+    // ============================
     private void OnClickQuickSession()
     {
         _ = RunQuickSessionAsync();
@@ -45,6 +53,9 @@ public sealed class MainMenuUIController : MonoBehaviour
 #endif
     }
 
+    // ============================
+    // Flow
+    // ============================
     private async Task RunQuickSessionAsync()
     {
         if (!TryGetContext(out var ctx)) return;
@@ -81,6 +92,9 @@ public sealed class MainMenuUIController : MonoBehaviour
         SetInteractable(true);
     }
 
+    // ============================
+    // Validation / Helpers
+    // ============================
     private bool TryGetContext(out QuickSessionContext ctx)
     {
         ctx = QuickSessionContext.Instance;
