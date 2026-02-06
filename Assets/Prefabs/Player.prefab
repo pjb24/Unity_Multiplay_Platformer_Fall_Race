@@ -17,6 +17,8 @@ GameObject:
   - component: {fileID: 1465562957821750158}
   - component: {fileID: 7332664892056867606}
   - component: {fileID: 3127499365900908459}
+  - component: {fileID: -740382889915954282}
+  - component: {fileID: 6264327263649260171}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -177,9 +179,9 @@ MonoBehaviour:
   SyncRotAngleX: 1
   SyncRotAngleY: 1
   SyncRotAngleZ: 1
-  SyncScaleX: 1
-  SyncScaleY: 1
-  SyncScaleZ: 1
+  SyncScaleX: 0
+  SyncScaleY: 0
+  SyncScaleZ: 0
   PositionThreshold: 0.001
   RotAngleThreshold: 0.01
   ScaleThreshold: 0.01
@@ -215,7 +217,7 @@ Rigidbody:
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 0
-  m_Constraints: 0
+  m_Constraints: 80
   m_CollisionDetection: 0
 --- !u!114 &7332664892056867606
 MonoBehaviour:
@@ -231,7 +233,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.Components.NetworkRigidbody
   ShowTopMostFoldoutHeaderGroup: 1
   NetworkRigidbodyBaseExpanded: 0
-  UseRigidBodyForMotion: 0
+  UseRigidBodyForMotion: 1
   AutoUpdateKinematicState: 1
   AutoSetKinematicOnDespawn: 1
 --- !u!114 &3127499365900908459
@@ -246,3 +248,42 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 05b9de10f8303074c94cb3f6aba2a19b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInputGate
+  ShowTopMostFoldoutHeaderGroup: 1
+  _inputBehaviours:
+  - {fileID: -740382889915954282}
+  _warnIfNullBehaviours: 1
+--- !u!114 &-740382889915954282
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f754096f03f85434ba9e3ea0a97f6263, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerInputSender
+  ShowTopMostFoldoutHeaderGroup: 1
+  _gate: {fileID: 3127499365900908459}
+  _sendHz: 30
+--- !u!114 &6264327263649260171
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 71041644de3597541808db7898ed75f9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerMotorServer
+  ShowTopMostFoldoutHeaderGroup: 1
+  _moveSpeed: 6
+  _airControl: 0.5
+  _jumpVelocity: 6.5
+  _groundMask:
+    serializedVersion: 2
+    m_Bits: 256
+  _groundCheckDistance: 1.15

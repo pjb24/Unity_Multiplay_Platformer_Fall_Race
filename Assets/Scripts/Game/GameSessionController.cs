@@ -9,6 +9,7 @@ public enum E_GameSessionState : byte
     Lobby = 0,
     Countdown = 1,
     Running = 2,
+    Result = 3,
 }
 
 public struct ReadyEntry : INetworkSerializable, IEquatable<ReadyEntry>
@@ -80,12 +81,24 @@ public sealed class GameSessionController : NetworkBehaviour
     }
 
     // ============================
+    // Tunables
+    // ============================
+    [Header("Timings (seconds)")]
+    [SerializeField] private double _countdownSeconds = 3.0;
+    [SerializeField] private double _resultSeconds = 2.0;
+
+    // ============================
     // Network State
     // ============================
     private readonly NetworkVariable<E_GameSessionState> _state =
         new NetworkVariable<E_GameSessionState>(E_GameSessionState.Lobby);
 
+    // Countdown 목표 시각 (ServerTime)
     private readonly NetworkVariable<double> _startAtServerTime =
+        new NetworkVariable<double>(0.0);
+
+    // Result 종료 시각 (ServerTime)
+    private readonly NetworkVariable<double> _resultEndAtServerTime =
         new NetworkVariable<double>(0.0);
 
     private NetworkList<ReadyEntry> _readyList = new NetworkList<ReadyEntry>();
@@ -202,14 +215,25 @@ public sealed class GameSessionController : NetworkBehaviour
     {
         if (!IsServer) return;
 
-        // Countdown이 시작되면 서버도 Running으로 전환
+        double now = NetworkManager.ServerTime.Time;
+
+        // Countdown 종료 -> Running
         if (_state.Value == E_GameSessionState.Countdown)
         {
-            double now = NetworkManager.ServerTime.Time;
             if (now >= _startAtServerTime.Value && _startAtServerTime.Value > 0.0)
             {
                 _state.Value = E_GameSessionState.Running;
                 Debug.Log($"[GameSession] State -> Running. now={now:F3}, startAt={_startAtServerTime.Value:F3}");
+            }
+            return;
+        }
+
+        // Result 종료 -> 다음 Countdown
+        if (_state.Value == E_GameSessionState.Result)
+        {
+            if (now >= _resultEndAtServerTime.Value && _resultEndAtServerTime.Value > 0.0)
+            {
+                RequestStartNextStageCountdown_Server("result_end");
             }
         }
     }
@@ -227,6 +251,55 @@ public sealed class GameSessionController : NetworkBehaviour
             RebuildReadyListForLobby_Server();
             RebuildRuntimeDataForLobby_Server();
         }
+    }
+
+    // ============================
+    // Public Server Control (called by StageProgress etc.)
+    // ============================
+    public void RequestEnterResult_Server(string reason)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[GameSession] Result fallback 발생: RequestEnterResult_Server called on non-server.");
+            return;
+        }
+
+        if (_state.Value != E_GameSessionState.Running)
+        {
+            Debug.LogWarning($"[GameSession] Result fallback 발생: invalid state transition. state={_state.Value}, reason={reason}");
+            return;
+        }
+
+        double now = NetworkManager.ServerTime.Time;
+
+        _startAtServerTime.Value = 0.0; // Countdown 타이머 무효화
+        _resultEndAtServerTime.Value = now + Mathf.Max(0f, (float)_resultSeconds);
+        _state.Value = E_GameSessionState.Result;
+
+        Debug.Log($"[GameSession] State -> Result. now={now:F3}, endAt={_resultEndAtServerTime.Value:F3}, reason={reason}");
+    }
+
+    private void RequestStartNextStageCountdown_Server(string reason)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[GameSession] Countdown fallback 발생: RequestStartNextStageCountdown_Server called on non-server.");
+            return;
+        }
+
+        if (_state.Value != E_GameSessionState.Result)
+        {
+            Debug.LogWarning($"[GameSession] Countdown fallback 발생: invalid state transition. state={_state.Value}, reason={reason}");
+            return;
+        }
+
+        double now = NetworkManager.ServerTime.Time;
+
+        _resultEndAtServerTime.Value = 0.0;
+        _startAtServerTime.Value = now + Mathf.Max(0f, (float)_countdownSeconds);
+        _state.Value = E_GameSessionState.Countdown;
+
+        Debug.Log($"[GameSession] State -> Countdown(next stage). now={now:F3}, startAt={_startAtServerTime.Value:F3}, reason={reason}");
     }
 
     // ============================
@@ -302,10 +375,14 @@ public sealed class GameSessionController : NetworkBehaviour
             return;
         }
 
-        _startAtServerTime.Value = NetworkManager.ServerTime.Time + 3.0;
+        double now = NetworkManager.ServerTime.Time;
+
+        _resultEndAtServerTime.Value = 0.0;
+
+        _startAtServerTime.Value = now + Mathf.Max(0f, (float)_countdownSeconds);
         _state.Value = E_GameSessionState.Countdown;
 
-        Debug.Log($"[GameSession] State -> Countdown. startAt={_startAtServerTime.Value:F3}");
+        Debug.Log($"[GameSession] State -> Countdown. now={now:F3}, startAt={_startAtServerTime.Value:F3}");
 
         // Countdown 진입 직후: Lobby Lock 트리거 (서버 1회)
         RequestLockLobbyOnce_Server("countdown_enter");
@@ -349,6 +426,7 @@ public sealed class GameSessionController : NetworkBehaviour
 
         // 카운트다운/런닝 관련 값 리셋
         _startAtServerTime.Value = 0.0;
+        _resultEndAtServerTime.Value = 0.0;
 
         // 상태를 Lobby로
         _state.Value = E_GameSessionState.Lobby;
@@ -382,7 +460,8 @@ public sealed class GameSessionController : NetworkBehaviour
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
-            bool ready = (id == hostId); // Host만 Ready, Client는 NotReady
+            // Host만 Ready, Client는 NotReady
+            bool ready = (id == hostId);
             _readyList.Add(new ReadyEntry(id, ready));
         }
     }

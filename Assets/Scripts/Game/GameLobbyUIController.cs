@@ -308,7 +308,7 @@ public sealed class GameLobbyUIController : MonoBehaviour
             if (!pc.IsSpawned) continue;
             if (!pc.IsOwner) continue;
 
-            pc.SetEnabled(true);
+            pc.SetEnabled(true, E_InputGateReason.Run);
             _inputEnabled = true;
             return;
         }

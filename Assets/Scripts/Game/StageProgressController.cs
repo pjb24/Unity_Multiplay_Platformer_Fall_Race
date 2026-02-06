@@ -15,18 +15,29 @@ public sealed class StageProgressController : NetworkBehaviour
 
     private bool _endTriggered;
 
+    // "전원 Goal -> Result" 중복 진입 방지 (스테이지 인덱스 단위)
+    private readonly HashSet<int> _resultRequestedStages = new HashSet<int>();
+
+    // 구독 중복/누락 방지용
+    private bool _isSessionHooked;
+
     public override void OnNetworkSpawn()
     {
-        if (!IsServer) return;
+        if (IsServer)
+        {
+            RebuildFromConnectedClients();
 
-        RebuildFromConnectedClients();
+            NetworkManager.OnClientConnectedCallback += OnClientConnected_Server;
+            NetworkManager.OnClientDisconnectCallback += OnClientDisconnected_Server;
+        }
 
-        NetworkManager.OnClientConnectedCallback += OnClientConnected_Server;
-        NetworkManager.OnClientDisconnectCallback += OnClientDisconnected_Server;
+        HookGameSessionStateOnce();
     }
 
     public override void OnNetworkDespawn()
     {
+        UnhookGameSessionState();
+
         if (!IsServer) return;
 
         if (NetworkManager != null)
@@ -37,7 +48,76 @@ public sealed class StageProgressController : NetworkBehaviour
     }
 
     // =========================================
-    // Client -> Server: stage complete notify
+    // Hook GameSession State (Single Source of Truth)
+    // =========================================
+    private void HookGameSessionStateOnce()
+    {
+        if (_isSessionHooked) return;
+        _isSessionHooked = true;
+
+        var session = GameSessionController.Instance;
+        if (session == null)
+        {
+            Debug.LogWarning("[StageProgress] HookGameSession fallback 발생: GameSessionController.Instance is null.");
+            return;
+        }
+
+        session.AddStateListener(OnGameSessionStateChanged_Any);
+    }
+
+    private void UnhookGameSessionState()
+    {
+        if (!_isSessionHooked) return;
+        _isSessionHooked = false;
+
+        var session = GameSessionController.Instance;
+        if (session == null) return;
+
+        session.RemoveStateListener(OnGameSessionStateChanged_Any);
+    }
+
+    private void OnGameSessionStateChanged_Any(E_GameSessionState prev, E_GameSessionState next)
+    {
+        // Gate 제어는 서버가 결정해서 RPC로 뿌린다.
+        if (!IsServer) return;
+
+        switch (next)
+        {
+            case E_GameSessionState.Lobby:
+                // 세션 리셋과 동일 타이밍: 입력 열기 + 스테이지 진행 데이터 리셋
+                SetGateForLocalPlayerRpc(true, E_InputGateReason.Lobby);
+
+                RebuildFromConnectedClients();
+                Debug.Log("[StageProgress] Sync by GameSession: Lobby -> Gate Close + Rebuild.");
+                break;
+
+            case E_GameSessionState.Countdown:
+                // 스테이지 시작 준비(워프/서버 이동 차단은 별도 시스템에서)
+                SetGateForLocalPlayerRpc(false, E_InputGateReason.Countdown);
+
+                Debug.Log("[StageProgress] Sync by GameSession: Countdown -> Gate Close.");
+                break;
+
+            case E_GameSessionState.Running:
+                // 달리기 시작
+                SetGateForLocalPlayerRpc(true, E_InputGateReason.Run);
+
+                Debug.Log("[StageProgress] Sync by GameSession: Running -> Gate Open.");
+                break;
+
+            case E_GameSessionState.Result:
+                SetGateForLocalPlayerRpc(false, E_InputGateReason.Result);
+                Debug.Log("[StageProgress] Sync by GameSession: Result -> Gate Close.");
+                break;
+
+            default:
+                Debug.LogWarning($"[StageProgress] GameSessionState fallback 발생: unknown state={next}");
+                break;
+        }
+    }
+
+    // =========================================
+    // Client -> Server: stage complete notify (Goal 도달 보고)
     // =========================================
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     public void ReportStageClearedRpc(int stageIndex, RpcParams rpcParams = default)
@@ -74,6 +154,19 @@ public sealed class StageProgressController : NetworkBehaviour
             return;
         }
 
+        // Running이 아닌데 들어오면 상태 꼬임 신호. 무시하진 않되 Warning은 찍는다.
+        var session = GameSessionController.Instance;
+        if (session == null)
+        {
+            Debug.LogWarning("[StageProgress] ReportStageCleared fallback 발생: GameSessionController.Instance is null.");
+            return;
+        }
+
+        if (session.State != E_GameSessionState.Running)
+        {
+            Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: received while session.State={session.State}. sender={sender}, stageIndex={stageIndex}");
+        }
+
         if (!_clearedStageSetByClient.TryGetValue(sender, out var set))
         {
             set = new HashSet<int>();
@@ -93,17 +186,99 @@ public sealed class StageProgressController : NetworkBehaviour
 
         Debug.Log($"[StageProgress] Stage cleared. sender={sender}, stageIndex={stageIndex}, clearedCount={newCount}/{_stagesToFinish}");
 
-        // 완료 도달
-        if (newCount >= _stagesToFinish)
+        // Goal 도달 즉시: 해당 플레이어 입력 잠금(개별)
+        CloseGateForClient_Server(sender, E_InputGateReason.Goal);
+
+        // ===== 전원 Goal 도달 -> Result 요청 =====
+        if (IsAllConnectedPlayersClearedStage_Server(stageIndex))
         {
-            Debug.Log($"[StageProgress] Player finished all stages. sender={sender}");
+            // 중복 Result 진입 방지
+            if (_resultRequestedStages.Add(stageIndex))
+            {
+                // Result는 GameSession이 단일 진실
+                session.RequestEnterResult_Server("all_players_reached_goal");
+
+                Debug.Log($"[StageProgress] All players cleared stage -> RequestEnterResult. stageIndex={stageIndex}");
+            }
         }
 
-        // 전원 완료 체크
+        // ===== 전원 모든 스테이지 완료 -> EndMatch =====
         if (IsAllConnectedPlayersFinished_Server())
         {
             EndMatch_Server("all_players_finished");
         }
+    }
+
+    // =========================================
+    // Gate RPCs (Server authoritative trigger)
+    // =========================================
+    // 전원 공통: 각 클라(Host 포함)가 "자기 로컬 플레이어"의 Gate만 토글
+    [Rpc(SendTo.ClientsAndHost)]
+    private void SetGateForLocalPlayerRpc(bool open, E_InputGateReason reason, RpcParams rpcParams = default)
+    {
+        var nm = NetworkManager;
+        if (nm == null || nm.LocalClient == null)
+        {
+            Debug.LogWarning("[StageProgress] SetGateForLocalPlayer fallback 발생: NetworkManager/LocalClient is null.");
+            return;
+        }
+
+        var player = nm.LocalClient.PlayerObject;
+        if (player == null)
+        {
+            Debug.LogWarning("[StageProgress] SetGateForLocalPlayer fallback 발생: LocalClient.PlayerObject is null.");
+            return;
+        }
+
+        var gate = player.GetComponent<PlayerInputGate>();
+        if (gate == null)
+        {
+            Debug.LogWarning("[StageProgress] SetGateForLocalPlayer fallback 발생: PlayerInputGate missing on local player.");
+            return;
+        }
+
+        if (open) gate.Open(reason);
+        else gate.Close(reason);
+    }
+
+    // 특정 클라 타겟: Goal 도달 잠금 등
+    [Rpc(SendTo.SpecifiedInParams)]
+    private void CloseGate_TargetRpc(E_InputGateReason reason, RpcParams rpcParams)
+    {
+        var nm = NetworkManager;
+        if (nm == null || nm.LocalClient == null)
+        {
+            Debug.LogWarning("[StageProgress] CloseGate_Target fallback 발생: NetworkManager/LocalClient is null.");
+            return;
+        }
+
+        var player = nm.LocalClient.PlayerObject;
+        if (player == null)
+        {
+            Debug.LogWarning("[StageProgress] CloseGate_Target fallback 발생: LocalClient.PlayerObject is null.");
+            return;
+        }
+
+        var gate = player.GetComponent<PlayerInputGate>();
+        if (gate == null)
+        {
+            Debug.LogWarning("[StageProgress] CloseGate_Target fallback 발생: PlayerInputGate missing on local player.");
+            return;
+        }
+
+        gate.Close(reason);
+    }
+
+    private void CloseGateForClient_Server(ulong clientId, E_InputGateReason reason)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] CloseGateForClient fallback 발생: called on non-server.");
+            return;
+        }
+
+        // 2.8 문서 권장: SendTo.SpecifiedInParams + RpcTarget.Single(...)로 타겟 전달
+        CloseGate_TargetRpc(reason, RpcTarget.Single(clientId, RpcTargetUse.Temp));
     }
 
     // =========================================
@@ -122,8 +297,9 @@ public sealed class StageProgressController : NetworkBehaviour
 
         Debug.Log($"[StageProgress] EndMatch triggered. reason={reason}");
 
-        // GameSessionController에 종료 처리가 붙을 예정이면 여기서 호출
-        // (현재 요구사항: EndMatch_Server() 호출 지점만 확보)
+        // 전원 잠금(안전)
+        SetGateForLocalPlayerRpc(false, E_InputGateReason.Result);
+
         var session = GameSessionController.Instance;
         if (session == null)
         {
@@ -131,10 +307,10 @@ public sealed class StageProgressController : NetworkBehaviour
             return;
         }
 
-        // 1) 세션 리셋 (서버)
+        // 세션 리셋 (서버)
         session.ResetSessionToLobby_Server("match_end");
 
-        // 2) 로비 Unlock (Host만 동작, 내부에서 Host 체크/로그 처리)
+        // 로비 Unlock (Host만 동작, 내부에서 Host 체크/로그 처리)
         var qs = QuickSessionContext.Instance;
         if (qs == null)
         {
@@ -153,6 +329,7 @@ public sealed class StageProgressController : NetworkBehaviour
     {
         _clearedCountByClient.Clear();
         _clearedStageSetByClient.Clear();
+        _resultRequestedStages.Clear();
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
@@ -200,6 +377,23 @@ public sealed class StageProgressController : NetworkBehaviour
             }
 
             if (count < required)
+                return false;
+        }
+
+        return true;
+    }
+
+    private bool IsAllConnectedPlayersClearedStage_Server(int stageIndex)
+    {
+        foreach (var id in NetworkManager.ConnectedClientsIds)
+        {
+            if (!_clearedStageSetByClient.TryGetValue(id, out var set))
+            {
+                Debug.LogWarning($"[StageProgress] StageAllCheck fallback 발생: missing stage set. clientId={id}");
+                return false;
+            }
+
+            if (!set.Contains(stageIndex))
                 return false;
         }
 
