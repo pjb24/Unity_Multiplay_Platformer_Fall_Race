@@ -152,6 +152,8 @@ MonoBehaviour:
   _lobbyPollIntervalSec: 4
   _heartbeatIntervalSec: 15
   _relayProtocol: 0
+  _gameSceneName: Game
+  _clientKeepPollingInGame: 0
 --- !u!4 &262630548
 Transform:
   m_ObjectHideFlags: 0

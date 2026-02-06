@@ -1,23 +1,32 @@
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
 /// Owner 클라에서만 입력을 수집하고 서버로 전송한다.
-/// - Gate 닫힘: move=Vector2.zero, jumpDown=false 를 계속 전송(권장)
-/// - Jump는 엣지(Down)만 보낸다.
+/// - 입력 수집: LocalInputReceiver(MonoBehaviour)가 담당
+/// - 이 컴포넌트는 Owner일 때만 입력 리스너를 붙이고, sendHz로 서버 RPC 전송
+/// - Gate 닫힘: move=zero, jumpDown=false 를 계속 전송(권장)
+/// 
+/// [중요] 점프 누락 방지:
+/// - jumpDown은 "큐(래치)"로 잡아두고, 실제 전송이 발생한 프레임에만 소비한다.
+/// - sendHz 샘플링 사이에 눌렀다 떼도 다음 전송에 포함된다.
 /// </summary>
 public sealed class PlayerInputSender : NetworkBehaviour
 {
     [Header("Refs")]
-    [SerializeField] private PlayerInputGate _gate; // 기존 Gate 참조 (API는 아래 가정)
+    [SerializeField] private PlayerInputGate _gate;
+    [SerializeField] private LocalInputReceiver _input; // 전용 입력 수신기 (MonoBehaviour)
 
     [Header("Send Rate")]
     [SerializeField, Range(10, 60)] private int _sendHz = 30;
 
+    private Vector2 _cachedMove;
+    // 점프 Down 이벤트는 큐(래치)로 유지
+    private bool _jumpQueued;
+
     private float _sendAccum;
     private int _tick;
-    private bool _prevJumpHeld;
+    private bool _subscribed;
 
     private void Awake()
     {
@@ -25,36 +34,66 @@ public sealed class PlayerInputSender : NetworkBehaviour
         {
             Debug.LogWarning("[PlayerInputSender] Fallback 발생: PlayerInputGate is null. Always open으로 간주한다.");
         }
+
+        if (_input == null)
+            Debug.LogWarning("[PlayerInputSender] Fallback 발생: LocalInputReceiver is null. 입력 전송 불가.");
     }
 
     public override void OnNetworkSpawn()
     {
         if (!IsOwner)
         {
+            // Non-owner는 입력 자체를 끈다 (로컬 입력 오작동 방지)
+            if (_input != null)
+            {
+                _input.enabled = false;
+            }
             enabled = false;
             return;
         }
+
+        // Owner만 입력 리스너 연결
+        TrySubscribeOwnerInput();
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        if (!IsOwner) return;
+        TryUnsubscribeOwnerInput();
+    }
+
+    private void OnEnable()
+    {
+        if (!IsOwner) return;
+        TrySubscribeOwnerInput();
+    }
+
+    private void OnDisable()
+    {
+        if (!IsOwner) return;
+        TryUnsubscribeOwnerInput();
     }
 
     private void Update()
     {
         // Owner만 동작
         if (!IsOwner) return;
+        if (_input == null) return;
 
         _tick++;
 
-        // 입력 수집
-        Vector2 move = ReadMove();
-        bool jumpHeld = ReadJumpHeld();
-        bool jumpDown = jumpHeld && !_prevJumpHeld;
-        _prevJumpHeld = jumpHeld;
+        // Gate 반영(닫히면 0/false로 강제)
+        Vector2 move = _cachedMove;
+        bool jumpDown = _jumpQueued; // 큐는 아직 소비하지 않는다
 
         // Gate 반영
-        bool gateOpen = IsGateOpen();
-        if (!gateOpen)
+        if (!IsGateOpen())
         {
             move = Vector2.zero;
             jumpDown = false;
+
+            // Gate 닫힘 정책: 큐도 버린다
+            _jumpQueued = false;
         }
 
         // 전송 레이트 제한(너무 자주 보내지 않기)
@@ -65,46 +104,79 @@ public sealed class PlayerInputSender : NetworkBehaviour
         if (_sendAccum < interval) return;
         _sendAccum = 0f;
 
-        SubmitInputServerRpc(move, jumpDown, _tick);
+        // 여기서 "전송"이 실제로 일어남 -> 이제 큐 소비
+        SubmitInputRpc(move, jumpDown, _tick);
+
+        if (jumpDown)
+            _jumpQueued = false;
     }
 
-    private Vector2 ReadMove()
+    private void TrySubscribeOwnerInput()
     {
-        float x = 0f;
-        float y = 0f;
+        if (_subscribed) return;
 
-        if (Keyboard.current.aKey.isPressed) x -= 1f;
-        if (Keyboard.current.dKey.isPressed) x += 1f;
-        if (Keyboard.current.sKey.isPressed) y -= 1f;
-        if (Keyboard.current.wKey.isPressed) y += 1f;
+        if (_input == null)
+        {
+            Debug.LogWarning("[PlayerInputSender] Fallback 발생: LocalInputReceiver missing. Subscribe 불가.");
+            return;
+        }
 
-        Vector2 v = new Vector2(x, y);
-        // 대각선 속도 보정(정규화)
-        if (v.sqrMagnitude > 1f) v.Normalize();
-        return v;
+        _input.AddMoveListener(OnMove);
+        _input.AddJumpListener(OnJumpDown);
+
+        _subscribed = true;
+
+        // 초기값 정리
+        _cachedMove = Vector2.zero;
+        _jumpQueued = false;
+        _sendAccum = 0f;
+        _tick = 0;
     }
 
-    private bool ReadJumpHeld()
+    private void TryUnsubscribeOwnerInput()
     {
-        return Keyboard.current.spaceKey.isPressed;
+        if (!_subscribed) return;
+        if (_input == null)
+        {
+            _subscribed = false;
+            return;
+        }
+
+        _input.RemoveMoveListener(OnMove);
+        _input.RemoveJumpListener(OnJumpDown);
+
+        _subscribed = false;
+    }
+
+    private void OnMove(Vector2 move)
+    {
+        // 대각선 보정
+        if (move.sqrMagnitude > 1f) move.Normalize();
+        _cachedMove = move;
+    }
+
+    private void OnJumpDown()
+    {
+        // Down 엣지를 큐로 래치(전송될 때까지 유지)
+        _jumpQueued = true;
     }
 
     private bool IsGateOpen()
     {
         if (_gate == null) return true;
-
-        // Gate API 가정: _gate.IsOpen bool
-        // 네 Gate가 다르면 이 함수만 바꿔라.
-        bool open = _gate.IsOpen;
-
-        // Gate가 “상태 꼬임”을 내부에서 검출한다면,
-        // 거기서 Warning을 찍게 하거나 여기서 추가로 찍어라.
-        return open;
+        return _gate.IsOpen;
     }
 
-    [ServerRpc]
-    private void SubmitInputServerRpc(Vector2 move, bool jumpDown, int tick, ServerRpcParams rpcParams = default)
+    // Owner만 호출 가능하게 InvokePermission.Owner
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    private void SubmitInputRpc(Vector2 move, bool jumpDown, int tick, RpcParams rpcParams = default)
     {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[PlayerInputSender] SubmitInput fallback 발생: called on non-server.");
+            return;
+        }
+
         // 서버에서만 실행됨
         // 소유자 검증(치트/오작동 방지 기본)
         if (rpcParams.Receive.SenderClientId != OwnerClientId)

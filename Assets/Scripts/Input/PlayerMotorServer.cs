@@ -53,7 +53,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         _tick = tick;
         _move = Vector2.ClampMagnitude(move, 1f);
-        _jumpDown = jumpDown;
+
+        // 덮어쓰기 금지: 점프 엣지 누적
+        _jumpDown |= jumpDown;
     }
 
     private void FixedUpdate()

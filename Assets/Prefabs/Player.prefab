@@ -18,6 +18,7 @@ GameObject:
   - component: {fileID: 7332664892056867606}
   - component: {fileID: 3127499365900908459}
   - component: {fileID: -740382889915954282}
+  - component: {fileID: -536203120248885485}
   - component: {fileID: 6264327263649260171}
   m_Layer: 0
   m_Name: Player
@@ -134,7 +135,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
   GlobalObjectIdHash: 1894539413
-  InScenePlacedSourceGlobalObjectIdHash: 0
+  InScenePlacedSourceGlobalObjectIdHash: 1894539413
   DeferredDespawnTick: 0
   Ownership: 1
   AlwaysReplicateAsRoot: 0
@@ -266,7 +267,23 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInputSender
   ShowTopMostFoldoutHeaderGroup: 1
   _gate: {fileID: 3127499365900908459}
+  _input: {fileID: -536203120248885485}
   _sendHz: 30
+--- !u!114 &-536203120248885485
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d9a28ca2c4c53b84cba99a8ced06f60b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LocalInputReceiver
+  _asset: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  _movePath: Player/Move
+  _jumpPath: Player/Jump
 --- !u!114 &6264327263649260171
 MonoBehaviour:
   m_ObjectHideFlags: 0
