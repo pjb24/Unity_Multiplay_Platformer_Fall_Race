@@ -1,11 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 
 public sealed class StageProgressController : NetworkBehaviour
 {
     [SerializeField] private int _stagesToFinish = 3;
+    [SerializeField] private StageSpawnPoints _spawnPoints;
+    [SerializeField] private bool _warpOnCountdown = true;
 
     // Server only: clientId -> cleared stages count
     private readonly Dictionary<ulong, int> _clearedCountByClient = new Dictionary<ulong, int>(8);
@@ -21,6 +24,9 @@ public sealed class StageProgressController : NetworkBehaviour
     // 구독 중복/누락 방지용
     private bool _isSessionHooked;
 
+    // Server only: current stage index
+    private int _currentStageIndex;
+
     public override void OnNetworkSpawn()
     {
         if (IsServer)
@@ -29,6 +35,13 @@ public sealed class StageProgressController : NetworkBehaviour
 
             NetworkManager.OnClientConnectedCallback += OnClientConnected_Server;
             NetworkManager.OnClientDisconnectCallback += OnClientDisconnected_Server;
+
+            if (_spawnPoints == null)
+            {
+                _spawnPoints = FindFirstObjectByType<StageSpawnPoints>();
+                if (_spawnPoints == null)
+                    Debug.LogWarning("[StageProgress] SpawnPoints fallback 발생: StageSpawnPoints not found in scene.");
+            }
         }
 
         HookGameSessionStateOnce();
@@ -86,6 +99,7 @@ public sealed class StageProgressController : NetworkBehaviour
             case E_GameSessionState.Lobby:
                 // 세션 리셋과 동일 타이밍: 입력 열기 + 스테이지 진행 데이터 리셋
                 SetGateForLocalPlayerRpc(true, E_InputGateReason.Lobby);
+                _currentStageIndex = 0;
 
                 RebuildFromConnectedClients();
                 Debug.Log("[StageProgress] Sync by GameSession: Lobby -> Gate Close + Rebuild.");
@@ -94,6 +108,8 @@ public sealed class StageProgressController : NetworkBehaviour
             case E_GameSessionState.Countdown:
                 // 스테이지 시작 준비(워프/서버 이동 차단은 별도 시스템에서)
                 SetGateForLocalPlayerRpc(false, E_InputGateReason.Countdown);
+                UpdateStageIndexForCountdown(prev);
+                WarpPlayersToSpawnPoints_Server("countdown_enter");
 
                 Debug.Log("[StageProgress] Sync by GameSession: Countdown -> Gate Close.");
                 break;
@@ -113,6 +129,22 @@ public sealed class StageProgressController : NetworkBehaviour
             default:
                 Debug.LogWarning($"[StageProgress] GameSessionState fallback 발생: unknown state={next}");
                 break;
+        }
+    }
+
+    private void UpdateStageIndexForCountdown(E_GameSessionState prev)
+    {
+        if (!IsServer) return;
+
+        if (prev == E_GameSessionState.Lobby)
+        {
+            _currentStageIndex = 0;
+            return;
+        }
+
+        if (prev == E_GameSessionState.Result)
+        {
+            _currentStageIndex = Mathf.Clamp(_currentStageIndex + 1, 0, Mathf.Max(0, _stagesToFinish - 1));
         }
     }
 
@@ -280,6 +312,87 @@ public sealed class StageProgressController : NetworkBehaviour
 
         // 2.8 문서 권장: SendTo.SpecifiedInParams + RpcTarget.Single(...)로 타겟 전달
         CloseGate_TargetRpc(reason, RpcTarget.Single(clientId, RpcTargetUse.Temp));
+    }
+
+    private void WarpPlayersToSpawnPoints_Server(string reason)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] Warp fallback 발생: called on non-server.");
+            return;
+        }
+
+        if (!_warpOnCountdown) return;
+
+        var nm = NetworkManager;
+        if (nm == null)
+        {
+            Debug.LogWarning("[StageProgress] Warp fallback 발생: NetworkManager is null.");
+            return;
+        }
+
+        if (_spawnPoints == null)
+        {
+            Debug.LogWarning("[StageProgress] Warp fallback 발생: StageSpawnPoints is null.");
+            return;
+        }
+
+        var orderedClients = nm.ConnectedClientsIds.OrderBy(id => id).ToList();
+
+        for (int i = 0; i < orderedClients.Count; i++)
+        {
+            ulong clientId = orderedClients[i];
+            if (!nm.ConnectedClients.TryGetValue(clientId, out var client))
+            {
+                Debug.LogWarning($"[StageProgress] Warp fallback 발생: client not found. clientId={clientId}");
+                continue;
+            }
+
+            var player = client.PlayerObject;
+            if (player == null)
+            {
+                Debug.LogWarning($"[StageProgress] Warp fallback 발생: PlayerObject is null. clientId={clientId}");
+                continue;
+            }
+
+            if (!_spawnPoints.TryGetSpawnPoint(_currentStageIndex, i, out var spawn))
+            {
+                spawn = _spawnPoints.FallbackSpawn;
+                if (spawn == null)
+                {
+                    Debug.LogWarning($"[StageProgress] Warp fallback 발생: spawn point missing. stage={_currentStageIndex}, slot={i}, clientId={clientId}");
+                    continue;
+                }
+
+                Debug.LogWarning($"[StageProgress] Warp fallback 발생: using fallback spawn. stage={_currentStageIndex}, slot={i}, clientId={clientId}");
+            }
+
+            var netTransform = player.GetComponent<NetworkTransform>();
+            if (netTransform != null)
+            {
+                netTransform.Teleport(spawn.position, spawn.rotation, player.transform.localScale);
+            }
+            else
+            {
+                player.transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+            }
+
+            var motor = player.GetComponent<PlayerMotorServer>();
+            if (motor != null)
+            {
+                motor.StopImmediately_Server($"warp:{reason}");
+                continue;
+            }
+
+            var rb = player.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+
+        Debug.Log($"[StageProgress] WarpPlayersToSpawnPoints done. stage={_currentStageIndex}, reason={reason}");
     }
 
     private void StopPlayerMovement_Server(ulong clientId, string reason)
