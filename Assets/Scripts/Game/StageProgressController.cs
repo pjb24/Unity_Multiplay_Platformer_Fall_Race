@@ -188,6 +188,7 @@ public sealed class StageProgressController : NetworkBehaviour
 
         // Goal 도달 즉시: 해당 플레이어 입력 잠금(개별)
         CloseGateForClient_Server(sender, E_InputGateReason.Goal);
+        StopPlayerMovement_Server(sender, "goal_reached");
 
         // ===== 전원 Goal 도달 -> Result 요청 =====
         if (IsAllConnectedPlayersClearedStage_Server(stageIndex))
@@ -279,6 +280,44 @@ public sealed class StageProgressController : NetworkBehaviour
 
         // 2.8 문서 권장: SendTo.SpecifiedInParams + RpcTarget.Single(...)로 타겟 전달
         CloseGate_TargetRpc(reason, RpcTarget.Single(clientId, RpcTargetUse.Temp));
+    }
+
+    private void StopPlayerMovement_Server(ulong clientId, string reason)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] StopPlayerMovement fallback 발생: called on non-server.");
+            return;
+        }
+
+        var nm = NetworkManager;
+        if (nm == null)
+        {
+            Debug.LogWarning("[StageProgress] StopPlayerMovement fallback 발생: NetworkManager is null.");
+            return;
+        }
+
+        if (!nm.ConnectedClients.TryGetValue(clientId, out var client))
+        {
+            Debug.LogWarning($"[StageProgress] StopPlayerMovement fallback 발생: client not found. clientId={clientId}");
+            return;
+        }
+
+        var player = client.PlayerObject;
+        if (player == null)
+        {
+            Debug.LogWarning($"[StageProgress] StopPlayerMovement fallback 발생: PlayerObject is null. clientId={clientId}");
+            return;
+        }
+
+        var motor = player.GetComponent<PlayerMotorServer>();
+        if (motor == null)
+        {
+            Debug.LogWarning($"[StageProgress] StopPlayerMovement fallback 발생: PlayerMotorServer missing. clientId={clientId}");
+            return;
+        }
+
+        motor.StopImmediately_Server(reason);
     }
 
     // =========================================

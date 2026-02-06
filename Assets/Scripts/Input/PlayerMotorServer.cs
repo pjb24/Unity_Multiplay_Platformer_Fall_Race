@@ -58,6 +58,29 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _jumpDown |= jumpDown;
     }
 
+    /// <summary>서버에서 즉시 정지 처리(Goal 도달 등).</summary>
+    public void StopImmediately_Server(string reason = null)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[PlayerMotorServer] Fallback 발생: StopImmediately_Server called on non-server.");
+            return;
+        }
+
+        _move = Vector2.zero;
+        _jumpDown = false;
+
+        var v = _rb.linearVelocity;
+        v.x = 0f;
+        v.y = 0f;
+        v.z = 0f;
+        _rb.linearVelocity = v;
+        _rb.angularVelocity = Vector3.zero;
+
+        if (!string.IsNullOrEmpty(reason))
+            Debug.Log($"[PlayerMotorServer] StopImmediately_Server: {reason}");
+    }
+
     private void FixedUpdate()
     {
         if (!IsServer) return;
@@ -66,13 +89,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (!CanMove_Server())
         {
             // 즉시 정지(Goal/Countdown 등)
-            _move = Vector2.zero;
-            _jumpDown = false;
-
-            var v = _rb.linearVelocity;
-            v.x = 0f;
-            v.z = 0f;
-            _rb.linearVelocity = v;
+            StopImmediately_Server("gate_closed");
             return;
         }
 
@@ -101,12 +118,30 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
     private bool CanMove_Server()
     {
-        // TODO: StageProgressController(서버)에서 상태 확인해서 막아라.
-        // 예시:
-        // var stage = FindObjectOfType<StageProgressController>();
-        // return stage != null && stage.CanPlayerMove(OwnerClientId);
+        if (!IsServer)
+        {
+            Debug.LogWarning("[PlayerMotorServer] Fallback 발생: CanMove_Server called on non-server.");
+            return false;
+        }
 
-        return true;
+        var session = GameSessionController.Instance;
+        if (session == null)
+        {
+            Debug.LogWarning("[PlayerMotorServer] Fallback 발생: GameSessionController.Instance is null.");
+            return false;
+        }
+
+        bool result = false;
+        if (session.State == E_GameSessionState.Running)
+        {
+            result = true;
+        }
+        if (session.State == E_GameSessionState.Lobby)
+        {
+            result = true;
+        }
+
+        return result;
     }
 
     private bool IsGrounded_Server()
