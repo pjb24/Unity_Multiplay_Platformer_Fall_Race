@@ -44,11 +44,10 @@ public sealed class PlayerInputSender : NetworkBehaviour
     {
         if (!IsOwner)
         {
-            // Non-owner는 입력 자체를 끈다 (로컬 입력 오작동 방지)
-            if (_input != null)
-            {
-                _input.enabled = false;
-            }
+            // Non-owner는 입력 전송만 비활성화한다.
+            // LocalInputReceiver를 끄면 공유 InputActionAsset까지 Disable될 수 있어
+            // 로컬 플레이어 입력이 같이 꺼지는 문제가 발생한다.
+
             enabled = false;
             return;
         }
