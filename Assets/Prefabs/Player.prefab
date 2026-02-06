@@ -20,6 +20,7 @@ GameObject:
   - component: {fileID: -740382889915954282}
   - component: {fileID: -536203120248885485}
   - component: {fileID: 6264327263649260171}
+  - component: {fileID: 6926624359167892058}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -304,3 +305,15 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 256
   _groundCheckDistance: 1.15
+--- !u!114 &6926624359167892058
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 36606cdaadef1f447b7eb4c562e3e447, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LocalPlayerCameraTarget
