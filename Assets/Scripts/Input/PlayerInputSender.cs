@@ -16,11 +16,12 @@ public sealed class PlayerInputSender : NetworkBehaviour
     [Header("Refs")]
     [SerializeField] private PlayerInputGate _gate;
     [SerializeField] private LocalInputReceiver _input; // 전용 입력 수신기 (MonoBehaviour)
+    [SerializeField] private Transform _cameraTransform;
 
     [Header("Send Rate")]
     [SerializeField, Range(10, 60)] private int _sendHz = 30;
 
-    private Vector2 _cachedMove;
+    private Vector2 _cachedMoveInput;
     // 점프 Down 이벤트는 큐(래치)로 유지
     private bool _jumpQueued;
 
@@ -83,7 +84,7 @@ public sealed class PlayerInputSender : NetworkBehaviour
         _tick++;
 
         // Gate 반영(닫히면 0/false로 강제)
-        Vector2 move = _cachedMove;
+        Vector2 move = GetCameraRelativeMove(_cachedMoveInput);
         bool jumpDown = _jumpQueued; // 큐는 아직 소비하지 않는다
 
         // Gate 반영
@@ -127,7 +128,7 @@ public sealed class PlayerInputSender : NetworkBehaviour
         _subscribed = true;
 
         // 초기값 정리
-        _cachedMove = Vector2.zero;
+        _cachedMoveInput = Vector2.zero;
         _jumpQueued = false;
         _sendAccum = 0f;
         _tick = 0;
@@ -152,13 +153,41 @@ public sealed class PlayerInputSender : NetworkBehaviour
     {
         // 대각선 보정
         if (move.sqrMagnitude > 1f) move.Normalize();
-        _cachedMove = move;
+        _cachedMoveInput = move;
     }
 
     private void OnJumpDown()
     {
         // Down 엣지를 큐로 래치(전송될 때까지 유지)
         _jumpQueued = true;
+    }
+
+    private Vector2 GetCameraRelativeMove(Vector2 input)
+    {
+        if (input == Vector2.zero) return Vector2.zero;
+
+        if (_cameraTransform == null && Camera.main != null)
+        {
+            _cameraTransform = Camera.main.transform;
+        }
+
+        if (_cameraTransform == null)
+            return input;
+
+        Vector3 forward = _cameraTransform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.0001f)
+            return input;
+        forward.Normalize();
+
+        Vector3 right = _cameraTransform.right;
+        right.y = 0f;
+        right.Normalize();
+
+        Vector3 worldMove = forward * input.y + right * input.x;
+        Vector2 move = new Vector2(worldMove.x, worldMove.z);
+        if (move.sqrMagnitude > 1f) move.Normalize();
+        return move;
     }
 
     private bool IsGateOpen()
