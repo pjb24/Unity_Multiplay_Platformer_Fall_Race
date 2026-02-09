@@ -11,6 +11,7 @@ public sealed class StageProgressController : NetworkBehaviour
     [SerializeField] private bool _warpOnCountdown = true;
     [SerializeField] private int _stageCheckpointIndexBase = 1000;
     [SerializeField] private int _stageCheckpointIndexStride = 1000;
+    [SerializeField] private float _goalWindowSeconds = 60f;
 
     // Server only: clientId -> cleared stages count
     private readonly Dictionary<ulong, int> _clearedCountByClient = new Dictionary<ulong, int>(8);
@@ -28,6 +29,28 @@ public sealed class StageProgressController : NetworkBehaviour
 
     // Server only: current stage index
     private int _currentStageIndex;
+
+    // Server only: stageIndex -> first arrival & goal window info
+    private readonly Dictionary<int, StageGoalWindowInfo> _goalWindowByStage = new Dictionary<int, StageGoalWindowInfo>();
+
+    // Server only: stageIndex -> (clientId -> arrival info)
+    private readonly Dictionary<int, Dictionary<ulong, StageArrivalInfo>> _arrivalByStage =
+        new Dictionary<int, Dictionary<ulong, StageArrivalInfo>>();
+
+    private struct StageGoalWindowInfo
+    {
+        public bool hasFirstArrival;
+        public ulong firstArriver;
+        public double firstGoalServerTime;
+        public double goalWindowEndServerTime;
+        public double stageStartServerTime;
+    }
+
+    private struct StageArrivalInfo
+    {
+        public double arrivalServerTime;
+        public bool withinGoalWindow;
+    }
 
     public override void OnNetworkSpawn()
     {
@@ -180,6 +203,12 @@ public sealed class StageProgressController : NetworkBehaviour
             return;
         }
 
+        if (stageIndex >= _stagesToFinish)
+        {
+            Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: stageIndex out of range. stageIndex={stageIndex}, stagesToFinish={_stagesToFinish}");
+            return;
+        }
+
         ulong sender = rpcParams.Receive.SenderClientId;
 
         if (!NetworkManager.ConnectedClientsIds.Contains(sender))
@@ -201,6 +230,12 @@ public sealed class StageProgressController : NetworkBehaviour
             Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: received while session.State={session.State}. sender={sender}, stageIndex={stageIndex}");
         }
 
+        if (stageIndex != _currentStageIndex)
+        {
+            Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: stageIndex mismatch. currentStage={_currentStageIndex}, reported={stageIndex}, sender={sender}");
+            return;
+        }
+
         if (!_clearedStageSetByClient.TryGetValue(sender, out var set))
         {
             set = new HashSet<int>();
@@ -217,6 +252,9 @@ public sealed class StageProgressController : NetworkBehaviour
 
         int newCount = _clearedCountByClient[sender] + 1;
         _clearedCountByClient[sender] = newCount;
+
+        double now = NetworkManager.ServerTime.Time;
+        RegisterGoalArrival_Server(sender, stageIndex, now, session.StartAtServerTime);
 
         Debug.Log($"[StageProgress] Stage cleared. sender={sender}, stageIndex={stageIndex}, clearedCount={newCount}/{_stagesToFinish}");
 
@@ -495,6 +533,8 @@ public sealed class StageProgressController : NetworkBehaviour
         _clearedCountByClient.Clear();
         _clearedStageSetByClient.Clear();
         _resultRequestedStages.Clear();
+        _goalWindowByStage.Clear();
+        _arrivalByStage.Clear();
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
@@ -505,6 +545,65 @@ public sealed class StageProgressController : NetworkBehaviour
         _endTriggered = false;
 
         Debug.Log($"[StageProgress] RebuildFromConnectedClients. connected={NetworkManager.ConnectedClientsIds.Count}");
+    }
+
+    private void RegisterGoalArrival_Server(ulong sender, int stageIndex, double arrivalTime, double stageStartTime)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] RegisterGoalArrival fallback 발생: called on non-server.");
+            return;
+        }
+
+        if (!_goalWindowByStage.TryGetValue(stageIndex, out var windowInfo))
+        {
+            windowInfo = new StageGoalWindowInfo
+            {
+                hasFirstArrival = false,
+                firstArriver = 0,
+                firstGoalServerTime = 0.0,
+                goalWindowEndServerTime = 0.0,
+                stageStartServerTime = stageStartTime > 0.0 ? stageStartTime : arrivalTime,
+            };
+        }
+
+        if (!windowInfo.hasFirstArrival)
+        {
+            windowInfo.hasFirstArrival = true;
+            windowInfo.firstArriver = sender;
+            windowInfo.firstGoalServerTime = arrivalTime;
+
+            double baseTime = windowInfo.stageStartServerTime > 0.0 ? windowInfo.stageStartServerTime : arrivalTime;
+            windowInfo.goalWindowEndServerTime = baseTime + Mathf.Max(0f, _goalWindowSeconds);
+
+            Debug.Log($"[StageProgress] First goal arrival. stageIndex={stageIndex}, sender={sender}, firstGoalAt={arrivalTime:F3}, windowEndAt={windowInfo.goalWindowEndServerTime:F3}");
+        }
+
+        _goalWindowByStage[stageIndex] = windowInfo;
+
+        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
+        {
+            arrivals = new Dictionary<ulong, StageArrivalInfo>();
+            _arrivalByStage[stageIndex] = arrivals;
+        }
+
+        if (arrivals.ContainsKey(sender))
+        {
+            Debug.LogWarning($"[StageProgress] RegisterGoalArrival fallback 발생: arrival already recorded. sender={sender}, stageIndex={stageIndex}");
+            return;
+        }
+
+        bool withinGoalWindow = windowInfo.goalWindowEndServerTime <= 0.0 || arrivalTime <= windowInfo.goalWindowEndServerTime;
+        arrivals[sender] = new StageArrivalInfo
+        {
+            arrivalServerTime = arrivalTime,
+            withinGoalWindow = withinGoalWindow,
+        };
+
+        if (!withinGoalWindow)
+        {
+            Debug.LogWarning($"[StageProgress] Goal window expired. sender={sender}, stageIndex={stageIndex}, arrival={arrivalTime:F3}, windowEnd={windowInfo.goalWindowEndServerTime:F3}");
+        }
     }
 
     private void OnClientConnected_Server(ulong clientId)
