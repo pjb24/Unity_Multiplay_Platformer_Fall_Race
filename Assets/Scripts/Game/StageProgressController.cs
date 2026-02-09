@@ -9,6 +9,8 @@ public sealed class StageProgressController : NetworkBehaviour
     [SerializeField] private int _stagesToFinish = 3;
     [SerializeField] private StageSpawnPoints _spawnPoints;
     [SerializeField] private bool _warpOnCountdown = true;
+    [SerializeField] private int _stageCheckpointIndexBase = 1000;
+    [SerializeField] private int _stageCheckpointIndexStride = 1000;
 
     // Server only: clientId -> cleared stages count
     private readonly Dictionary<ulong, int> _clearedCountByClient = new Dictionary<ulong, int>(8);
@@ -377,6 +379,12 @@ public sealed class StageProgressController : NetworkBehaviour
                 player.transform.SetPositionAndRotation(spawn.position, spawn.rotation);
             }
 
+            var respawn = player.GetComponent<PlayerRespawnServer>();
+            if (respawn != null)
+            {
+                respawn.SetStageStartCheckpoint_Server(spawn.position, spawn.rotation, GetStageCheckpointIndexBase());
+            }
+
             var motor = player.GetComponent<PlayerMotorServer>();
             if (motor != null)
             {
@@ -393,6 +401,11 @@ public sealed class StageProgressController : NetworkBehaviour
         }
 
         Debug.Log($"[StageProgress] WarpPlayersToSpawnPoints done. stage={_currentStageIndex}, reason={reason}");
+    }
+
+    private int GetStageCheckpointIndexBase()
+    {
+        return _stageCheckpointIndexBase + (_currentStageIndex * _stageCheckpointIndexStride);
     }
 
     private void StopPlayerMovement_Server(ulong clientId, string reason)

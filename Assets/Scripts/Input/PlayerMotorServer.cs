@@ -19,6 +19,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private LayerMask _groundMask;
     [SerializeField] private float _groundCheckDistance = 1.15f;
 
+    [Header("Debug")]
+    [SerializeField] private bool _logStopImmediately = false;
+
     private Rigidbody _rb;
 
     private Vector2 _move;
@@ -77,7 +80,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _rb.linearVelocity = v;
         _rb.angularVelocity = Vector3.zero;
 
-        if (!string.IsNullOrEmpty(reason))
+        if (_logStopImmediately && !string.IsNullOrEmpty(reason))
             Debug.Log($"[PlayerMotorServer] StopImmediately_Server: {reason}");
     }
 

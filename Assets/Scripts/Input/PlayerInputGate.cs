@@ -10,6 +10,7 @@ public enum E_InputGateReason
     Run = 30,
     Goal = 40,
     Result = 50,
+    Respawn = 60,
     DebugForce = 90,
 }
 

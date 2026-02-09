@@ -21,9 +21,10 @@ GameObject:
   - component: {fileID: -536203120248885485}
   - component: {fileID: 6264327263649260171}
   - component: {fileID: 6926624359167892058}
+  - component: {fileID: 539336039086100174}
   m_Layer: 0
   m_Name: Player
-  m_TagString: Untagged
+  m_TagString: Player
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -269,6 +270,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   _gate: {fileID: 3127499365900908459}
   _input: {fileID: -536203120248885485}
+  _cameraTransform: {fileID: 0}
   _sendHz: 30
 --- !u!114 &-536203120248885485
 MonoBehaviour:
@@ -305,6 +307,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 256
   _groundCheckDistance: 1.15
+  _logStopImmediately: 0
 --- !u!114 &6926624359167892058
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -317,3 +320,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 36606cdaadef1f447b7eb4c562e3e447, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::LocalPlayerCameraTarget
+  ShowTopMostFoldoutHeaderGroup: 1
+  _cameraTarget: {fileID: 0}
+--- !u!114 &539336039086100174
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 00a10eee98f01a74a8e5e6cdc593b99e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerRespawnServer
+  ShowTopMostFoldoutHeaderGroup: 1
+  _startCheckpointIndex: 1000
+  _respawnDelaySec: 1
+  _hardBottomY: -200
+  _hardBottomCheckInterval: 0.5
+  _lockInputDuringRespawn: 1
