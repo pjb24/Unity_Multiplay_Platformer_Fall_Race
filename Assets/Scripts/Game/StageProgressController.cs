@@ -42,6 +42,9 @@ public sealed class StageProgressController : NetworkBehaviour
     private readonly Dictionary<int, Dictionary<ulong, StageArrivalInfo>> _arrivalByStage =
         new Dictionary<int, Dictionary<ulong, StageArrivalInfo>>();
 
+    // Server only: stageIndex -> run start time (server time)
+    private readonly Dictionary<int, double> _stageRunStartTimeByStage = new Dictionary<int, double>();
+
     private struct StageGoalWindowInfo
     {
         public bool hasFirstArrival;
@@ -62,10 +65,10 @@ public sealed class StageProgressController : NetworkBehaviour
         // 클라 보고가 들어온 시각(서버 시간) - 타임아웃 Retire의 경우 0
         public double reportServerTime;
 
-        // 기록에 사용될 최종 시간(서버 시간)
-        // - 정상 도착: reportServerTime
-        // - 늦게 도착/Retire: firstGoalServerTime + retirePenaltySeconds
-        public double finalRecordServerTime;
+        // 기록에 사용될 최종 시간(스테이지 Run 시작부터 경과된 시간)
+        // - 정상 도착: reportServerTime - stageRunStartTime
+        // - 늦게 도착/Retire: (firstGoalServerTime + retirePenaltySeconds) - stageRunStartTime
+        public double finalRecordSecondsFromStageStart;
 
         public bool withinGoalWindow;
         public bool retired;
@@ -167,6 +170,7 @@ public sealed class StageProgressController : NetworkBehaviour
             case E_GameSessionState.Running:
                 // 달리기 시작
                 SetGateForLocalPlayerRpc(true, E_InputGateReason.Run);
+                RecordStageRunStartTime_Server(_currentStageIndex);
 
                 Debug.Log("[StageProgress] Sync by GameSession: Running -> Gate Open.");
                 break;
@@ -365,21 +369,23 @@ public sealed class StageProgressController : NetworkBehaviour
         bool withinWindow = reportTime <= windowInfo.goalWindowEndServerTime;
         bool retired = !withinWindow;
 
-        double finalRecord = retired
+        double finalRecordServerTime = retired
             ? (windowInfo.firstGoalServerTime + retirePenaltySec)
             : reportTime;
+        double stageRunStartTime = GetStageRunStartTimeOrFallback(stageIndex, reportTime);
+        double finalRecordSecondsFromStageStart = Mathf.Max(0f, (float)(finalRecordServerTime - stageRunStartTime));
 
         arrivals[sender] = new StageArrivalInfo
         {
             reportServerTime = reportTime,
-            finalRecordServerTime = finalRecord,
+            finalRecordSecondsFromStageStart = finalRecordSecondsFromStageStart,
             withinGoalWindow = withinWindow,
             retired = retired,
         };
 
         if (retired)
         {
-            Debug.LogWarning($"[StageProgress] Retire(late goal). sender={sender}, stageIndex={stageIndex}, report={reportTime:F3}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecord:F3}");
+            Debug.LogWarning($"[StageProgress] Retire(late goal). sender={sender}, stageIndex={stageIndex}, report={reportTime:F3}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecordSecondsFromStageStart:F3}s");
         }
     }
 
@@ -412,7 +418,9 @@ public sealed class StageProgressController : NetworkBehaviour
         }
 
         float retirePenaltySec = Mathf.Max(0f, _retirePenaltySeconds);
-        double finalRecord = windowInfo.firstGoalServerTime + retirePenaltySec;
+        double finalRecordServerTime = windowInfo.firstGoalServerTime + retirePenaltySec;
+        double stageRunStartTime = GetStageRunStartTimeOrFallback(stageIndex, finalRecordServerTime);
+        double finalRecordSecondsFromStageStart = Mathf.Max(0f, (float)(finalRecordServerTime - stageRunStartTime));
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
@@ -426,7 +434,7 @@ public sealed class StageProgressController : NetworkBehaviour
                 arrivals[id] = new StageArrivalInfo
                 {
                     reportServerTime = 0.0,
-                    finalRecordServerTime = finalRecord,
+                    finalRecordSecondsFromStageStart = finalRecordSecondsFromStageStart,
                     withinGoalWindow = false,
                     retired = true,
                 };
@@ -443,7 +451,7 @@ public sealed class StageProgressController : NetworkBehaviour
                 {
                     _clearedCountByClient[id] = _clearedCountByClient[id] + 1;
 
-                    Debug.LogWarning($"[StageProgress] Retire(timeout). clientId={id}, stageIndex={stageIndex}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecord:F3}");
+                    Debug.LogWarning($"[StageProgress] Retire(timeout). clientId={id}, stageIndex={stageIndex}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecordSecondsFromStageStart:F3}s");
 
                     CloseGateForClient_Server(id, E_InputGateReason.Goal);
                     StopPlayerMovement_Server(id, "retire_timeout");
@@ -730,6 +738,7 @@ public sealed class StageProgressController : NetworkBehaviour
         _resultRequestedStages.Clear();
         _goalWindowByStage.Clear();
         _arrivalByStage.Clear();
+        _stageRunStartTimeByStage.Clear();
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
@@ -740,6 +749,35 @@ public sealed class StageProgressController : NetworkBehaviour
         _endTriggered = false;
 
         Debug.Log($"[StageProgress] RebuildFromConnectedClients. connected={NetworkManager.ConnectedClientsIds.Count}");
+    }
+
+    private void RecordStageRunStartTime_Server(int stageIndex)
+    {
+        if (!IsServer) return;
+
+        var nm = NetworkManager;
+        if (nm == null)
+        {
+            Debug.LogWarning("[StageProgress] RecordStageRunStartTime fallback 발생: NetworkManager is null.");
+            return;
+        }
+
+        double startTime = nm.ServerTime.Time;
+        _stageRunStartTimeByStage[stageIndex] = startTime;
+
+        Debug.Log($"[StageProgress] Stage run start time recorded. stageIndex={stageIndex}, startTime={startTime:F3}");
+    }
+
+    private double GetStageRunStartTimeOrFallback(int stageIndex, double fallbackTime)
+    {
+        if (_stageRunStartTimeByStage.TryGetValue(stageIndex, out double startTime))
+        {
+            return startTime;
+        }
+
+        Debug.LogWarning($"[StageProgress] Stage run start time missing. stageIndex={stageIndex}, fallbackTime={fallbackTime:F3}");
+        _stageRunStartTimeByStage[stageIndex] = fallbackTime;
+        return fallbackTime;
     }
 
     private void OnClientConnected_Server(ulong clientId)
