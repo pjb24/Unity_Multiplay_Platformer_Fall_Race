@@ -11,17 +11,22 @@ public sealed class StageProgressController : NetworkBehaviour
     [SerializeField] private bool _warpOnCountdown = true;
     [SerializeField] private int _stageCheckpointIndexBase = 1000;
     [SerializeField] private int _stageCheckpointIndexStride = 1000;
+
+    [Header("Goal Window")]
     [SerializeField] private float _goalWindowSeconds = 60f;
 
-    // Server only: clientId -> cleared stages count
+    [Header("Retire Rule")]
+    [SerializeField] private float _retirePenaltySeconds = 90f;
+
+    // Server only: clientId -> resolved stages count (Goal 도착 or Retire 처리 완료)
     private readonly Dictionary<ulong, int> _clearedCountByClient = new Dictionary<ulong, int>(8);
 
-    // Server only: 중복 완료 방지(스테이지 인덱스 기반)
+    // Server only: 중복 완료 방지(스테이지 인덱스 기반) - "resolved" 의미 (Goal/Retire)
     private readonly Dictionary<ulong, HashSet<int>> _clearedStageSetByClient = new Dictionary<ulong, HashSet<int>>(8);
 
     private bool _endTriggered;
 
-    // "전원 Goal -> Result" 중복 진입 방지 (스테이지 인덱스 단위)
+    // "전원 Resolved -> Result" 중복 진입 방지 (스테이지 인덱스 단위)
     private readonly HashSet<int> _resultRequestedStages = new HashSet<int>();
 
     // 구독 중복/누락 방지용
@@ -41,15 +46,35 @@ public sealed class StageProgressController : NetworkBehaviour
     {
         public bool hasFirstArrival;
         public ulong firstArriver;
+
+        // 첫 Goal 도착 시점(서버 시간)
         public double firstGoalServerTime;
+
+        // firstGoalServerTime + goalWindowSeconds
         public double goalWindowEndServerTime;
-        public double stageStartServerTime;
+
+        // window 만료에 따른 Retire 일괄 적용 완료 여부
+        public bool retireResolvedApplied;
     }
 
     private struct StageArrivalInfo
     {
-        public double arrivalServerTime;
+        // 클라 보고가 들어온 시각(서버 시간) - 타임아웃 Retire의 경우 0
+        public double reportServerTime;
+
+        // 기록에 사용될 최종 시간(서버 시간)
+        // - 정상 도착: reportServerTime
+        // - 늦게 도착/Retire: firstGoalServerTime + retirePenaltySeconds
+        public double finalRecordServerTime;
+
         public bool withinGoalWindow;
+        public bool retired;
+    }
+
+    private void Update()
+    {
+        if (!IsServer) return;
+        ResolveGoalWindowTimeouts_Server();
     }
 
     public override void OnNetworkSpawn()
@@ -243,39 +268,209 @@ public sealed class StageProgressController : NetworkBehaviour
             _clearedCountByClient[sender] = 0;
         }
 
-        // 중복 완료 방지
+        // 중복 완료(=resolved) 방지
         if (!set.Add(stageIndex))
         {
-            Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: duplicate clear ignored. sender={sender}, stageIndex={stageIndex}");
+            Debug.LogWarning($"[StageProgress] ReportStageCleared fallback 발생: duplicate resolved ignored. sender={sender}, stageIndex={stageIndex}");
             return;
         }
+
+        double now = NetworkManager.ServerTime.Time;
+
+        // ===== 핵심 변경: 첫 Goal 도착 시점부터 60초 시작 =====
+        // 늦게 보고한 경우 Retire 처리 + 기록=firstGoal+90초
+        RegisterGoalArrivalOrRetire_Server(sender, stageIndex, now);
 
         int newCount = _clearedCountByClient[sender] + 1;
         _clearedCountByClient[sender] = newCount;
 
-        double now = NetworkManager.ServerTime.Time;
-        RegisterGoalArrival_Server(sender, stageIndex, now, session.StartAtServerTime);
+        Debug.Log($"[StageProgress] Stage resolved(Goal/Retire). sender={sender}, stageIndex={stageIndex}, resolvedCount={newCount}/{_stagesToFinish}");
 
-        Debug.Log($"[StageProgress] Stage cleared. sender={sender}, stageIndex={stageIndex}, clearedCount={newCount}/{_stagesToFinish}");
-
-        // Goal 도달 즉시: 해당 플레이어 입력 잠금(개별)
+        // Goal/Retire 처리 즉시: 해당 플레이어 입력 잠금(개별)
         CloseGateForClient_Server(sender, E_InputGateReason.Goal);
-        StopPlayerMovement_Server(sender, "goal_reached");
+        StopPlayerMovement_Server(sender, "stage_resolved");
 
-        // ===== 전원 Goal 도달 -> Result 요청 =====
-        if (IsAllConnectedPlayersClearedStage_Server(stageIndex))
+        // ===== 전원 Resolved -> Result 요청 =====
+        if (IsAllConnectedPlayersResolvedStage_Server(stageIndex))
         {
             // 중복 Result 진입 방지
             if (_resultRequestedStages.Add(stageIndex))
             {
                 // Result는 GameSession이 단일 진실
-                session.RequestEnterResult_Server("all_players_reached_goal");
+                session.RequestEnterResult_Server("all_players_resolved_stage");
 
-                Debug.Log($"[StageProgress] All players cleared stage -> RequestEnterResult. stageIndex={stageIndex}");
+                Debug.Log($"[StageProgress] All players resolved stage -> RequestEnterResult. stageIndex={stageIndex}");
             }
         }
 
         // ===== 전원 모든 스테이지 완료 -> EndMatch =====
+        if (IsAllConnectedPlayersFinished_Server())
+        {
+            EndMatch_Server("all_players_finished");
+        }
+    }
+
+    // =========================================
+    // Goal Window / Retire rules
+    // =========================================
+    private void RegisterGoalArrivalOrRetire_Server(ulong sender, int stageIndex, double reportTime)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] RegisterGoalArrivalOrRetire fallback 발생: called on non-server.");
+            return;
+        }
+
+        float windowSec = Mathf.Max(0f, _goalWindowSeconds);
+        float retirePenaltySec = Mathf.Max(0f, _retirePenaltySeconds);
+
+        if (!_goalWindowByStage.TryGetValue(stageIndex, out var windowInfo))
+        {
+            windowInfo = new StageGoalWindowInfo
+            {
+                hasFirstArrival = false,
+                firstArriver = 0,
+                firstGoalServerTime = 0.0,
+                goalWindowEndServerTime = 0.0,
+                retireResolvedApplied = false,
+            };
+        }
+
+        // 첫 Goal 도착이면 여기서 윈도우 시작(=firstGoal + 60)
+        if (!windowInfo.hasFirstArrival)
+        {
+            windowInfo.hasFirstArrival = true;
+            windowInfo.firstArriver = sender;
+            windowInfo.firstGoalServerTime = reportTime;
+            windowInfo.goalWindowEndServerTime = reportTime + windowSec;
+            windowInfo.retireResolvedApplied = false;
+
+            Debug.Log($"[StageProgress] First goal arrival -> start window. stageIndex={stageIndex}, sender={sender}, firstGoalAt={reportTime:F3}, windowEndAt={windowInfo.goalWindowEndServerTime:F3}");
+        }
+
+        _goalWindowByStage[stageIndex] = windowInfo;
+
+        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
+        {
+            arrivals = new Dictionary<ulong, StageArrivalInfo>();
+            _arrivalByStage[stageIndex] = arrivals;
+        }
+
+        if (arrivals.ContainsKey(sender))
+        {
+            Debug.LogWarning($"[StageProgress] RegisterGoalArrivalOrRetire fallback 발생: arrival already recorded. sender={sender}, stageIndex={stageIndex}");
+            return;
+        }
+
+        bool withinWindow = reportTime <= windowInfo.goalWindowEndServerTime;
+        bool retired = !withinWindow;
+
+        double finalRecord = retired
+            ? (windowInfo.firstGoalServerTime + retirePenaltySec)
+            : reportTime;
+
+        arrivals[sender] = new StageArrivalInfo
+        {
+            reportServerTime = reportTime,
+            finalRecordServerTime = finalRecord,
+            withinGoalWindow = withinWindow,
+            retired = retired,
+        };
+
+        if (retired)
+        {
+            Debug.LogWarning($"[StageProgress] Retire(late goal). sender={sender}, stageIndex={stageIndex}, report={reportTime:F3}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecord:F3}");
+        }
+    }
+
+    private void ResolveGoalWindowTimeouts_Server()
+    {
+        if (!IsServer) return;
+        if (_endTriggered) return;
+
+        // 현재 스테이지만 처리(요구사항: 첫 goal부터 60초 제한)
+        int stageIndex = _currentStageIndex;
+
+        if (!_goalWindowByStage.TryGetValue(stageIndex, out var windowInfo))
+            return;
+
+        if (!windowInfo.hasFirstArrival)
+            return;
+
+        if (windowInfo.retireResolvedApplied)
+            return;
+
+        double now = NetworkManager != null ? NetworkManager.ServerTime.Time : 0.0;
+        if (now <= windowInfo.goalWindowEndServerTime)
+            return;
+
+        // 윈도우 만료: 아직 도착 보고 없는 플레이어는 Retire로 처리 + 기록=firstGoal+90
+        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
+        {
+            arrivals = new Dictionary<ulong, StageArrivalInfo>();
+            _arrivalByStage[stageIndex] = arrivals;
+        }
+
+        float retirePenaltySec = Mathf.Max(0f, _retirePenaltySeconds);
+        double finalRecord = windowInfo.firstGoalServerTime + retirePenaltySec;
+
+        foreach (var id in NetworkManager.ConnectedClientsIds)
+        {
+            // 이미 resolved(Goal/Retire) 된 플레이어는 스킵
+            if (_clearedStageSetByClient.TryGetValue(id, out var set) && set.Contains(stageIndex))
+                continue;
+
+            // 아직 arrivals에 없으면 "미도착" -> Retire 확정
+            if (!arrivals.ContainsKey(id))
+            {
+                arrivals[id] = new StageArrivalInfo
+                {
+                    reportServerTime = 0.0,
+                    finalRecordServerTime = finalRecord,
+                    withinGoalWindow = false,
+                    retired = true,
+                };
+
+                // resolved로 카운트 처리
+                if (!_clearedStageSetByClient.TryGetValue(id, out var s))
+                {
+                    s = new HashSet<int>();
+                    _clearedStageSetByClient[id] = s;
+                    _clearedCountByClient[id] = 0;
+                }
+
+                if (s.Add(stageIndex))
+                {
+                    _clearedCountByClient[id] = _clearedCountByClient[id] + 1;
+
+                    Debug.LogWarning($"[StageProgress] Retire(timeout). clientId={id}, stageIndex={stageIndex}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecord:F3}");
+
+                    CloseGateForClient_Server(id, E_InputGateReason.Goal);
+                    StopPlayerMovement_Server(id, "retire_timeout");
+                }
+            }
+        }
+
+        windowInfo.retireResolvedApplied = true;
+        _goalWindowByStage[stageIndex] = windowInfo;
+
+        // 전원 resolved면 Result 요청(타임아웃에 의해 충족될 수 있음)
+        var session = GameSessionController.Instance;
+        if (session == null)
+        {
+            Debug.LogWarning("[StageProgress] ResolveGoalWindowTimeouts fallback 발생: GameSessionController.Instance is null.");
+            return;
+        }
+
+        if (IsAllConnectedPlayersResolvedStage_Server(stageIndex))
+        {
+            if (_resultRequestedStages.Add(stageIndex))
+            {
+                session.RequestEnterResult_Server("goal_window_timeout_resolved");
+                Debug.Log($"[StageProgress] Timeout resolved all -> RequestEnterResult. stageIndex={stageIndex}");
+            }
+        }
+
         if (IsAllConnectedPlayersFinished_Server())
         {
             EndMatch_Server("all_players_finished");
@@ -547,65 +742,6 @@ public sealed class StageProgressController : NetworkBehaviour
         Debug.Log($"[StageProgress] RebuildFromConnectedClients. connected={NetworkManager.ConnectedClientsIds.Count}");
     }
 
-    private void RegisterGoalArrival_Server(ulong sender, int stageIndex, double arrivalTime, double stageStartTime)
-    {
-        if (!IsServer)
-        {
-            Debug.LogWarning("[StageProgress] RegisterGoalArrival fallback 발생: called on non-server.");
-            return;
-        }
-
-        if (!_goalWindowByStage.TryGetValue(stageIndex, out var windowInfo))
-        {
-            windowInfo = new StageGoalWindowInfo
-            {
-                hasFirstArrival = false,
-                firstArriver = 0,
-                firstGoalServerTime = 0.0,
-                goalWindowEndServerTime = 0.0,
-                stageStartServerTime = stageStartTime > 0.0 ? stageStartTime : arrivalTime,
-            };
-        }
-
-        if (!windowInfo.hasFirstArrival)
-        {
-            windowInfo.hasFirstArrival = true;
-            windowInfo.firstArriver = sender;
-            windowInfo.firstGoalServerTime = arrivalTime;
-
-            double baseTime = windowInfo.stageStartServerTime > 0.0 ? windowInfo.stageStartServerTime : arrivalTime;
-            windowInfo.goalWindowEndServerTime = baseTime + Mathf.Max(0f, _goalWindowSeconds);
-
-            Debug.Log($"[StageProgress] First goal arrival. stageIndex={stageIndex}, sender={sender}, firstGoalAt={arrivalTime:F3}, windowEndAt={windowInfo.goalWindowEndServerTime:F3}");
-        }
-
-        _goalWindowByStage[stageIndex] = windowInfo;
-
-        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
-        {
-            arrivals = new Dictionary<ulong, StageArrivalInfo>();
-            _arrivalByStage[stageIndex] = arrivals;
-        }
-
-        if (arrivals.ContainsKey(sender))
-        {
-            Debug.LogWarning($"[StageProgress] RegisterGoalArrival fallback 발생: arrival already recorded. sender={sender}, stageIndex={stageIndex}");
-            return;
-        }
-
-        bool withinGoalWindow = windowInfo.goalWindowEndServerTime <= 0.0 || arrivalTime <= windowInfo.goalWindowEndServerTime;
-        arrivals[sender] = new StageArrivalInfo
-        {
-            arrivalServerTime = arrivalTime,
-            withinGoalWindow = withinGoalWindow,
-        };
-
-        if (!withinGoalWindow)
-        {
-            Debug.LogWarning($"[StageProgress] Goal window expired. sender={sender}, stageIndex={stageIndex}, arrival={arrivalTime:F3}, windowEnd={windowInfo.goalWindowEndServerTime:F3}");
-        }
-    }
-
     private void OnClientConnected_Server(ulong clientId)
     {
         // 게임 중 입장은 ConnectionApproval에서 차단하는 전제
@@ -647,7 +783,8 @@ public sealed class StageProgressController : NetworkBehaviour
         return true;
     }
 
-    private bool IsAllConnectedPlayersClearedStage_Server(int stageIndex)
+    // "Goal 도달"이 아니라 "Resolved(Goal/Retire)" 기준
+    private bool IsAllConnectedPlayersResolvedStage_Server(int stageIndex)
     {
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
