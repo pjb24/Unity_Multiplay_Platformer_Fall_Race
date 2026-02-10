@@ -22,6 +22,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [Header("Moving Platform")]
     [SerializeField] private float _jumpPlatformVelocityInherit = 0.85f;
 
+    [Header("Knockback")]
+    [SerializeField] private float _defaultKnockbackControlLockSec = 0.2f;
+
     [Header("Debug")]
     [SerializeField] private bool _logStopImmediately = false;
 
@@ -30,6 +33,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     private Vector2 _move;
     private bool _jumpDown;
     private int _tick;
+    private float _knockbackControlLockUntil;
 
     private void Awake()
     {
@@ -83,6 +87,29 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             Debug.Log($"[PlayerMotorServer] StopImmediately_Server: {reason}");
     }
 
+    /// <summary>
+    /// 서버 권위 넉백 적용.
+    /// - Rigidbody에 Impulse를 가하고
+    /// - 짧은 시간 이동 입력 오버라이드를 멈춰 튕겨나가는 느낌을 보존한다.
+    /// </summary>
+    public void ApplyKnockback_Server(Vector3 impulse, float controlLockSec = -1f)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[PlayerMotorServer] Fallback 발생: ApplyKnockback_Server called on non-server.");
+            return;
+        }
+
+        _rb.AddForce(impulse, ForceMode.Impulse);
+
+        float duration = controlLockSec >= 0f
+            ? controlLockSec
+            : Mathf.Max(0f, _defaultKnockbackControlLockSec);
+
+        if (duration > 0f)
+            _knockbackControlLockUntil = Mathf.Max(_knockbackControlLockUntil, Time.time + duration);
+    }
+
     private void FixedUpdate()
     {
         if (!IsServer) return;
@@ -109,9 +136,14 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         Vector3 wish = new Vector3(_move.x, 0f, _move.y) * (_moveSpeed * control);
 
         Vector3 vCur = _rb.linearVelocity;
-        vCur.x = wish.x + platformVelocity.x;
-        vCur.z = wish.z + platformVelocity.z;
-        _rb.linearVelocity = vCur;
+
+        bool lockedByKnockback = Time.time < _knockbackControlLockUntil;
+        if (!lockedByKnockback)
+        {
+            vCur.x = wish.x + platformVelocity.x;
+            vCur.z = wish.z + platformVelocity.z;
+            _rb.linearVelocity = vCur;
+        }
 
         // 점프(1단)
         if (_jumpDown && grounded)

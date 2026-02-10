@@ -1,0 +1,190 @@
+using System.Collections.Generic;
+using Unity.Netcode;
+using Unity.Netcode.Components;
+using UnityEngine;
+using UnityEngine.Events;
+
+/// <summary>
+/// Push Block Zone용 서버 권위 푸셔.
+/// - Left/Right 기준점 왕복 이동
+/// - 충돌 판정 및 AddForce(Impulse)는 서버에서만 수행
+/// - 플레이어별 쿨다운 적용
+/// - 과도한 수직 튐 방지(y 성분 클램프)
+/// </summary>
+[RequireComponent(typeof(NetworkObject))]
+[RequireComponent(typeof(Collider))]
+public sealed class PusherController : NetworkBehaviour
+{
+    private enum E_StartSide
+    {
+        Left = 0,
+        Right = 1,
+    }
+
+    [Header("Path")]
+    [SerializeField] private Transform _leftPoint;
+    [SerializeField] private Transform _rightPoint;
+    [SerializeField] private E_StartSide _startSide = E_StartSide.Left;
+
+    [Header("Movement")]
+    [SerializeField] private float _moveSpeed = 2.4f;
+    [SerializeField] private float _arrivalThreshold = 0.02f;
+    [SerializeField] private bool _lockRotationAxes = true;
+
+    [Header("Push")]
+    [SerializeField] private float _pushImpulse = 10f;
+    [SerializeField, Range(0.3f, 0.8f)] private float _pushCooldownPerPlayer = 0.5f;
+    [SerializeField] private float _maxUpwardY = 2f;
+    [SerializeField] private float _knockbackControlLockSec = 0.2f;
+
+    [Header("Debug")]
+    [SerializeField] private bool _drawGizmos = true;
+    [SerializeField] private bool _verboseLog = false;
+
+    [Header("Events")]
+    [SerializeField] private UnityEvent _onPlayerPushed;
+
+    private readonly Dictionary<ulong, float> _nextPushAllowedAt = new();
+
+    private Vector3 _targetPosition;
+    private int _travelDirection = 1;
+    private bool _movingToRight;
+
+    public override void OnNetworkSpawn()
+    {
+        if (!IsServer)
+            return;
+
+        if (_leftPoint == null || _rightPoint == null)
+        {
+            Debug.LogWarning($"[Pusher] {name}: Left/Right point가 누락되어 이동을 중단합니다.");
+            enabled = false;
+            return;
+        }
+
+        _movingToRight = _startSide == E_StartSide.Left;
+        _targetPosition = _movingToRight ? _rightPoint.position : _leftPoint.position;
+        transform.position = _movingToRight ? _leftPoint.position : _rightPoint.position;
+
+        var rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = true;
+            if (_lockRotationAxes)
+                rb.constraints = RigidbodyConstraints.FreezeRotation;
+        }
+
+        var nt = GetComponent<NetworkTransform>();
+        if (nt == null)
+            Debug.LogWarning($"[Pusher] {name}: NetworkTransform이 없어 클라 보간 품질이 낮아질 수 있습니다.");
+    }
+
+    private void FixedUpdate()
+    {
+        if (!IsServer)
+            return;
+
+        Vector3 current = transform.position;
+        float step = Mathf.Max(0.01f, _moveSpeed) * Time.fixedDeltaTime;
+        Vector3 next = Vector3.MoveTowards(current, _targetPosition, step);
+        transform.position = next;
+
+        if (Vector3.Distance(next, _targetPosition) <= _arrivalThreshold)
+        {
+            _movingToRight = !_movingToRight;
+            _targetPosition = _movingToRight ? _rightPoint.position : _leftPoint.position;
+            _travelDirection = _movingToRight ? 1 : -1;
+        }
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        TryPushPlayer_Server(collision);
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        TryPushPlayer_Server(collision);
+    }
+
+    private void TryPushPlayer_Server(Collision collision)
+    {
+        if (!IsServer)
+            return;
+
+        var playerNetObj = collision.collider.GetComponentInParent<NetworkObject>();
+        if (playerNetObj == null || !playerNetObj.CompareTag("Player"))
+            return;
+
+        if (!CanPushNow_Server(playerNetObj.OwnerClientId))
+            return;
+
+        var rb = collision.rigidbody != null
+            ? collision.rigidbody
+            : collision.collider.GetComponentInParent<Rigidbody>();
+
+        if (rb == null)
+            return;
+
+        Vector3 dir = ResolvePushDirection(collision, rb.worldCenterOfMass);
+        Vector3 impulse = dir * Mathf.Max(0f, _pushImpulse);
+
+        var motor = playerNetObj.GetComponent<PlayerMotorServer>();
+        if (motor != null)
+            motor.ApplyKnockback_Server(impulse, _knockbackControlLockSec);
+        else
+            rb.AddForce(impulse, ForceMode.Impulse);
+
+        _nextPushAllowedAt[playerNetObj.OwnerClientId] = Time.time + Mathf.Max(0.01f, _pushCooldownPerPlayer);
+        _onPlayerPushed?.Invoke();
+
+        if (_verboseLog)
+            Debug.Log($"[Pusher] Push applied -> player={playerNetObj.OwnerClientId}, impulse={_pushImpulse}, dir={dir}");
+    }
+
+    private bool CanPushNow_Server(ulong ownerClientId)
+    {
+        if (!_nextPushAllowedAt.TryGetValue(ownerClientId, out float readyAt))
+            return true;
+
+        return Time.time >= readyAt;
+    }
+
+    private Vector3 ResolvePushDirection(Collision collision, Vector3 playerCenter)
+    {
+        Vector3 pushDir = Vector3.right * _travelDirection;
+
+        if (collision.contactCount > 0)
+        {
+            ContactPoint contact = collision.GetContact(0);
+            if (contact.normal.sqrMagnitude > 0.0001f)
+                pushDir = -contact.normal.normalized;
+        }
+
+        if (pushDir.sqrMagnitude < 0.0001f)
+            pushDir = (playerCenter - transform.position).normalized;
+
+        pushDir.y = Mathf.Clamp(pushDir.y, -0.2f, Mathf.Max(0f, _maxUpwardY));
+
+        Vector3 horizontal = new Vector3(pushDir.x, 0f, pushDir.z);
+        if (horizontal.sqrMagnitude < 0.0001f)
+            horizontal = Vector3.right * _travelDirection;
+
+        horizontal.Normalize();
+        float y = Mathf.Clamp(pushDir.y, -0.2f, Mathf.Max(0f, _maxUpwardY));
+        Vector3 result = (horizontal + Vector3.up * y).normalized;
+
+        return result;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!_drawGizmos || _leftPoint == null || _rightPoint == null)
+            return;
+
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawLine(_leftPoint.position, _rightPoint.position);
+        Gizmos.DrawSphere(_leftPoint.position, 0.15f);
+        Gizmos.DrawSphere(_rightPoint.position, 0.15f);
+    }
+}
