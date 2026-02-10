@@ -19,6 +19,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private LayerMask _groundMask;
     [SerializeField] private float _groundCheckDistance = 1.15f;
 
+    [Header("Moving Platform")]
+    [SerializeField] private float _jumpPlatformVelocityInherit = 0.85f;
+
     [Header("Debug")]
     [SerializeField] private bool _logStopImmediately = false;
 
@@ -73,11 +76,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _move = Vector2.zero;
         _jumpDown = false;
 
-        var v = _rb.linearVelocity;
-        v.x = 0f;
-        v.y = 0f;
-        v.z = 0f;
-        _rb.linearVelocity = v;
+        _rb.linearVelocity = Vector3.zero;
         _rb.angularVelocity = Vector3.zero;
 
         if (_logStopImmediately && !string.IsNullOrEmpty(reason))
@@ -96,15 +95,22 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             return;
         }
 
-        bool grounded = IsGrounded_Server();
+        bool grounded = TryGetGroundHit_Server(out RaycastHit hit);
+        Vector3 platformVelocity = Vector3.zero;
+        if (grounded)
+        {
+            var platform = hit.collider != null ? hit.collider.GetComponentInParent<MovingPlatformController>() : null;
+            if (platform != null)
+                platformVelocity = platform.CurrentVelocity;
+        }
 
         // 이동
         float control = grounded ? 1f : _airControl;
         Vector3 wish = new Vector3(_move.x, 0f, _move.y) * (_moveSpeed * control);
 
         Vector3 vCur = _rb.linearVelocity;
-        vCur.x = wish.x;
-        vCur.z = wish.z;
+        vCur.x = wish.x + platformVelocity.x;
+        vCur.z = wish.z + platformVelocity.z;
         _rb.linearVelocity = vCur;
 
         // 점프(1단)
@@ -112,6 +118,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         {
             vCur = _rb.linearVelocity;
             vCur.y = _jumpVelocity;
+            vCur.x += platformVelocity.x * Mathf.Clamp01(_jumpPlatformVelocityInherit);
+            vCur.z += platformVelocity.z * Mathf.Clamp01(_jumpPlatformVelocityInherit);
             _rb.linearVelocity = vCur;
         }
 
@@ -147,10 +155,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         return result;
     }
 
-    private bool IsGrounded_Server()
+    private bool TryGetGroundHit_Server(out RaycastHit hit)
     {
         // 캡슐/콜라이더 구조에 따라 조정
         Vector3 origin = transform.position + Vector3.up * 0.1f;
-        return Physics.Raycast(origin, Vector3.down, _groundCheckDistance, _groundMask, QueryTriggerInteraction.Ignore);
+        return Physics.Raycast(origin, Vector3.down, out hit, _groundCheckDistance, _groundMask, QueryTriggerInteraction.Ignore);
     }
 }
