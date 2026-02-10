@@ -60,7 +60,7 @@ public sealed class StageProgressController : NetworkBehaviour
         public bool retireResolvedApplied;
     }
 
-    private struct StageArrivalInfo
+    public struct StageArrivalInfo
     {
         // 클라 보고가 들어온 시각(서버 시간) - 타임아웃 Retire의 경우 0
         public double reportServerTime;
@@ -72,6 +72,20 @@ public sealed class StageProgressController : NetworkBehaviour
 
         public bool withinGoalWindow;
         public bool retired;
+    }
+
+    public readonly struct StageResultEntry
+    {
+        public StageResultEntry(ulong clientId, int rank, StageArrivalInfo arrivalInfo)
+        {
+            ClientId = clientId;
+            Rank = rank;
+            ArrivalInfo = arrivalInfo;
+        }
+
+        public ulong ClientId { get; }
+        public int Rank { get; }
+        public StageArrivalInfo ArrivalInfo { get; }
     }
 
     private void Update()
@@ -483,6 +497,56 @@ public sealed class StageProgressController : NetworkBehaviour
         {
             EndMatch_Server("all_players_finished");
         }
+    }
+
+    // =========================================
+    // Server: Stage result ranking
+    // =========================================
+    public bool TryBuildStageRanking_Server(int stageIndex, out List<StageResultEntry> ranking, bool includeRetired = true)
+    {
+        ranking = new List<StageResultEntry>();
+
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] TryBuildStageRanking fallback 발생: called on non-server.");
+            return false;
+        }
+
+        if (stageIndex < 0 || stageIndex >= _stagesToFinish)
+        {
+            Debug.LogWarning($"[StageProgress] TryBuildStageRanking fallback 발생: invalid stageIndex={stageIndex}");
+            return false;
+        }
+
+        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
+        {
+            Debug.LogWarning($"[StageProgress] TryBuildStageRanking fallback 발생: no arrivals for stageIndex={stageIndex}");
+            return false;
+        }
+
+        if (!IsAllConnectedPlayersResolvedStage_Server(stageIndex))
+        {
+            Debug.LogWarning($"[StageProgress] TryBuildStageRanking fallback 발생: not all resolved. stageIndex={stageIndex}");
+            return false;
+        }
+
+        IEnumerable<KeyValuePair<ulong, StageArrivalInfo>> arrivalPairs = arrivals;
+        if (!includeRetired)
+            arrivalPairs = arrivalPairs.Where(pair => !pair.Value.retired);
+
+        var ordered = arrivalPairs
+            .OrderBy(pair => pair.Value.finalRecordSecondsFromStageStart)
+            .ThenBy(pair => pair.Value.reportServerTime)
+            .ThenBy(pair => pair.Key)
+            .ToList();
+
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            var pair = ordered[i];
+            ranking.Add(new StageResultEntry(pair.Key, i + 1, pair.Value));
+        }
+
+        return true;
     }
 
     // =========================================
