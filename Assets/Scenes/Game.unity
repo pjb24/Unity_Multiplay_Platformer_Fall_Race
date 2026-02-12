@@ -8653,6 +8653,74 @@ Transform:
   - {fileID: 1450019239}
   m_Father: {fileID: 662473647}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &963067224
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 963067225}
+  - component: {fileID: 963067226}
+  m_Layer: 0
+  m_Name: Stage Start Keyboard Guide Manager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &963067225
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963067224}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1939341621}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &963067226
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963067224}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be00113ea21dfae40b749f536cc91f9f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StageStartKeyboardGuidePlacer
+  _stageAnchors:
+  - _stageLabel: Stage 1
+    _startPoint: {fileID: 403532100}
+  - _stageLabel: Stage 2
+    _startPoint: {fileID: 191919719}
+  - _stageLabel: Stage 3
+    _startPoint: {fileID: 1666024858}
+  _forwardOffset: 2.6
+  _heightOffset: 1.45
+  _downwardTilt: 8
+  _moveLine: 'MOVE: WASD / ARROW KEYS'
+  _jumpLine: 'JUMP: SPACEBAR'
+  _fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  _fontSize: 3.6
+  _lineSpacing: 12
+  _textColor: {r: 0, g: 0, b: 0, a: 1}
+  _alignment: 514
+  _useOutline: 0
+  _outlineColor: {r: 0, g: 0, b: 0, a: 1}
+  _outlineWidth: 0.2
+  _useBackgroundPanel: 1
+  _backgroundColor: {r: 1, g: 1, b: 1, a: 1}
+  _backgroundSize: {x: 6, y: 1.7}
+  _backgroundDepth: 0.03
 --- !u!1 &980813579
 GameObject:
   m_ObjectHideFlags: 0
@@ -20576,6 +20644,7 @@ Transform:
   m_Children:
   - {fileID: 1235986061}
   - {fileID: 1890203142}
+  - {fileID: 963067225}
   - {fileID: 1409401741}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
