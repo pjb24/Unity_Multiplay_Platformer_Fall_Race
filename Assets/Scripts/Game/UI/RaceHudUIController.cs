@@ -44,6 +44,11 @@ public sealed class RaceHudUIController : MonoBehaviour
     private readonly List<RaceResultRowUI> _rows = new List<RaceResultRowUI>(8);
 
     /// <summary>
+    /// 결과 테이블 랭크 계산 재사용 캐시 맵입니다.
+    /// </summary>
+    private readonly Dictionary<ulong, int> _rankByClientCache = new Dictionary<ulong, int>(8);
+
+    /// <summary>
     /// 로컬 플레이어가 현재 스테이지 Goal을 확정했는지 여부입니다.
     /// </summary>
     private bool _isLocalStageResolved;
@@ -218,9 +223,24 @@ public sealed class RaceHudUIController : MonoBehaviour
             return;
         }
 
-        // Running 상태에서는 결과 UI를 표시하지 않습니다.
+        // 로컬 플레이어 Goal(Resolved) 상태 확인을 위한 현재 스테이지 인덱스입니다.
+        int stageIndex = _stageProgress.CurrentStageIndex;
+        // 로컬 플레이어 클라이언트 식별자입니다.
+        ulong localClientId = nm.LocalClientId;
+
+        float fixedRecord;
+
+        // Running 상태에서는 로컬 플레이어가 Goal 도착 시 결과 UI를 즉시 표시합니다.
         if (session.State == E_GameSessionState.Running)
         {
+            if (_stageProgress.TryGetPlayerStageRecord(localClientId, stageIndex, out fixedRecord))
+            {
+                _isLocalStageResolved = true;
+                _resolvedStageRecordSeconds = fixedRecord;
+                SetResultVisible(true);
+                return;
+            }
+
             SetResultVisible(false);
             return;
         }
@@ -232,13 +252,8 @@ public sealed class RaceHudUIController : MonoBehaviour
             return;
         }
 
-        // 로컬 플레이어가 Goal(Resolved) 상태인지 확인하기 위한 현재 스테이지 인덱스입니다.
-        int stageIndex = _stageProgress.CurrentStageIndex;
-        // 로컬 플레이어 클라이언트 식별자입니다.
-        ulong localClientId = nm.LocalClientId;
-
         // Result 진입 시점에 최종 확정 기록을 다시 확인합니다.
-        if (_stageProgress.TryGetPlayerStageRecord(localClientId, stageIndex, out float fixedRecord))
+        if (_stageProgress.TryGetPlayerStageRecord(localClientId, stageIndex, out fixedRecord))
         {
             _isLocalStageResolved = true;
             _resolvedStageRecordSeconds = fixedRecord;
@@ -257,8 +272,8 @@ public sealed class RaceHudUIController : MonoBehaviour
         if (_resultTableRoot == null || !_resultTableRoot.activeSelf)
             return;
 
-        // Result 상태가 아니면 결과 테이블 데이터를 갱신하지 않습니다.
-        if (session.State != E_GameSessionState.Result)
+        // Running/Result 상태가 아니면 결과 테이블 데이터를 갱신하지 않습니다.
+        if (session.State != E_GameSessionState.Running && session.State != E_GameSessionState.Result)
             return;
 
         // Run을 한 번도 시작하지 않았다면 결과 테이블을 갱신하지 않습니다.
@@ -314,18 +329,22 @@ public sealed class RaceHudUIController : MonoBehaviour
     /// </summary>
     private Dictionary<ulong, int> BuildRankByClient(List<StageProgressController.PlayerRaceRecordSnapshot> records)
     {
-        var map = new Dictionary<ulong, int>(records.Count);
+        _rankByClientCache.Clear();
 
+        // 현재 플레이어에 할당할 등수 값입니다.
         int currentRank = 0;
+        // 반복 중인 정렬 목록의 1-base 인덱스 값입니다.
         int index = 0;
+        // 동점 판정에 사용하는 직전 Total 값입니다.
         float lastTotal = -1f;
 
-        foreach (var r in records)
+        for (int i = 0; i < records.Count; i++)
         {
+            var r = records[i];
             index++;
             if (!r.HasAnyStageRecorded)
             {
-                map[r.ClientId] = 0;
+                _rankByClientCache[r.ClientId] = 0;
                 continue;
             }
 
@@ -335,10 +354,10 @@ public sealed class RaceHudUIController : MonoBehaviour
                 lastTotal = r.TotalSeconds;
             }
 
-            map[r.ClientId] = currentRank;
+            _rankByClientCache[r.ClientId] = currentRank;
         }
 
-        return map;
+        return _rankByClientCache;
     }
 
     /// <summary>

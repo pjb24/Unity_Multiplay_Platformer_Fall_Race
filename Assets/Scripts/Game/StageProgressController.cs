@@ -81,6 +81,16 @@ public sealed class StageProgressController : NetworkBehaviour
     /// </summary>
     private readonly Dictionary<ulong, int> _recordIndexByClient = new Dictionary<ulong, int>(8);
 
+    /// <summary>
+    /// 클라이언트 HUD 정렬용 레이스 기록 스냅샷 재사용 버퍼입니다.
+    /// </summary>
+    private readonly List<PlayerRaceRecordSnapshot> _raceRecordSnapshotBuffer = new List<PlayerRaceRecordSnapshot>(8);
+
+    /// <summary>
+    /// 클라이언트 HUD 정렬에 사용하는 비교기 인스턴스입니다.
+    /// </summary>
+    private readonly RaceRecordSnapshotComparer _raceRecordSnapshotComparer = new RaceRecordSnapshotComparer();
+
     public struct PlayerRaceRecordNet : INetworkSerializable, System.IEquatable<PlayerRaceRecordNet>
     {
         /// <summary>
@@ -1149,25 +1159,106 @@ public sealed class StageProgressController : NetworkBehaviour
 
     /// <summary>
     /// 클라이언트 UI에서 사용할 레이스 기록 스냅샷을 반환합니다.
+    /// 현재 진행 중 스테이지 Goal 도달 여부를 우선 반영해 정렬합니다.
     /// </summary>
     public bool TryGetRaceRecordsSnapshot(out List<PlayerRaceRecordSnapshot> orderedRecords)
     {
-        orderedRecords = new List<PlayerRaceRecordSnapshot>(_raceRecords.Count);
+        _raceRecordSnapshotBuffer.Clear();
+        if (_raceRecordSnapshotBuffer.Capacity < _raceRecords.Count)
+            _raceRecordSnapshotBuffer.Capacity = _raceRecords.Count;
 
         for (int i = 0; i < _raceRecords.Count; i++)
         {
             var e = _raceRecords[i];
-            orderedRecords.Add(new PlayerRaceRecordSnapshot(e.clientId, e.displayName.ToString(), e.stage1Seconds, e.stage2Seconds, e.stage3Seconds));
+            _raceRecordSnapshotBuffer.Add(new PlayerRaceRecordSnapshot(e.clientId,
+                e.displayName.ToString(), e.stage1Seconds, e.stage2Seconds, e.stage3Seconds));
         }
 
-        orderedRecords = orderedRecords
-            .OrderBy(e => e.HasAnyStageRecorded ? 0 : 1)
-            .ThenBy(e => e.HasAnyStageRecorded ? e.TotalSeconds : float.MaxValue)
-            .ThenBy(e => e.DisplayName)
-            .ThenBy(e => e.ClientId)
-            .ToList();
+        // 현재 진행 중 스테이지 인덱스를 1~3 범위로 보정한 정렬 기준 값입니다.
+        int sortStageIndex = Mathf.Clamp(CurrentStageIndex, 0, 2);
+
+        // 재사용 비교기에 현재 스테이지 인덱스를 설정해 할당 없이 정렬합니다.
+        _raceRecordSnapshotComparer.StageIndex = sortStageIndex;
+        _raceRecordSnapshotBuffer.Sort(_raceRecordSnapshotComparer);
+
+        orderedRecords = _raceRecordSnapshotBuffer;
 
         return true;
+    }
+
+    /// <summary>
+    /// 점수표 정렬 시 스테이지 인덱스를 주입해 재사용 가능한 비교기입니다.
+    /// </summary>
+    private sealed class RaceRecordSnapshotComparer : IComparer<PlayerRaceRecordSnapshot>
+    {
+        /// <summary>
+        /// 현재 정렬 기준으로 사용할 스테이지 인덱스입니다.
+        /// </summary>
+        public int StageIndex { get; set; }
+
+        /// <summary>
+        /// 두 레이스 기록 스냅샷의 우선순위를 비교합니다.
+        /// </summary>
+        public int Compare(PlayerRaceRecordSnapshot left, PlayerRaceRecordSnapshot right)
+        {
+            return CompareRaceRecordSnapshot(left, right, StageIndex);
+        }
+    }
+
+    /// <summary>
+    /// 점수표 정렬 규칙에 따라 두 플레이어 스냅샷의 우선순위를 비교합니다.
+    /// </summary>
+    private static int CompareRaceRecordSnapshot(PlayerRaceRecordSnapshot left, PlayerRaceRecordSnapshot right, int stageIndex)
+    {
+        // 왼쪽 플레이어의 현재 스테이지 Goal 도달 우선순위 값입니다.
+        int leftGoalPriority = HasReachedStageGoal(left, stageIndex) ? 0 : 1;
+        // 오른쪽 플레이어의 현재 스테이지 Goal 도달 우선순위 값입니다.
+        int rightGoalPriority = HasReachedStageGoal(right, stageIndex) ? 0 : 1;
+        if (leftGoalPriority != rightGoalPriority)
+            return leftGoalPriority.CompareTo(rightGoalPriority);
+
+        // 왼쪽 플레이어의 기록 보유 우선순위 값입니다.
+        int leftRecordPriority = left.HasAnyStageRecorded ? 0 : 1;
+        // 오른쪽 플레이어의 기록 보유 우선순위 값입니다.
+        int rightRecordPriority = right.HasAnyStageRecorded ? 0 : 1;
+        if (leftRecordPriority != rightRecordPriority)
+            return leftRecordPriority.CompareTo(rightRecordPriority);
+
+        // 왼쪽 플레이어의 Total 비교 기준 값입니다.
+        float leftTotalForSort = left.HasAnyStageRecorded ? left.TotalSeconds : float.MaxValue;
+        // 오른쪽 플레이어의 Total 비교 기준 값입니다.
+        float rightTotalForSort = right.HasAnyStageRecorded ? right.TotalSeconds : float.MaxValue;
+        int totalCompare = leftTotalForSort.CompareTo(rightTotalForSort);
+        if (totalCompare != 0)
+            return totalCompare;
+
+        // 왼쪽 플레이어의 이름 비교 결과 값입니다.
+        int displayNameCompare = string.Compare(left.DisplayName, right.DisplayName, System.StringComparison.Ordinal);
+        if (displayNameCompare != 0)
+            return displayNameCompare;
+
+        return left.ClientId.CompareTo(right.ClientId);
+    }
+
+    /// <summary>
+    /// 정렬 대상 플레이어가 특정 스테이지 Goal 기록을 보유했는지 확인합니다.
+    /// </summary>
+    private static bool HasReachedStageGoal(PlayerRaceRecordSnapshot snapshot, int stageIndex)
+    {
+        // 범위를 벗어난 stageIndex 입력에 대비해 보정한 스테이지 인덱스 값입니다.
+        int normalizedStageIndex = Mathf.Clamp(stageIndex, 0, 2);
+
+        // normalizedStageIndex에 대응하는 Goal 도달 여부 결과 변수입니다.
+        bool hasReached = false;
+
+        if (normalizedStageIndex == 0)
+            hasReached = snapshot.HasStage1;
+        else if (normalizedStageIndex == 1)
+            hasReached = snapshot.HasStage2;
+        else
+            hasReached = snapshot.HasStage3;
+
+        return hasReached;
     }
 
     /// <summary>
