@@ -1,11 +1,17 @@
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Collections;
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
 
 public sealed class StageProgressController : NetworkBehaviour
 {
+    /// <summary>
+    /// 현재 씬의 StageProgressController 싱글턴 인스턴스입니다.
+    /// </summary>
+    public static StageProgressController Instance { get; private set; }
+
     [SerializeField] private int _stagesToFinish = 3;
     [SerializeField] private StageSpawnPoints _spawnPoints;
     [SerializeField] private bool _warpOnCountdown = true;
@@ -17,6 +23,31 @@ public sealed class StageProgressController : NetworkBehaviour
 
     [Header("Retire Rule")]
     [SerializeField] private float _retirePenaltySeconds = 90f;
+
+    /// <summary>
+    /// 기록 미입력 상태를 표현하기 위한 센티넬 값입니다.
+    /// </summary>
+    public const float MissingRecordValue = -1f;
+
+    /// <summary>
+    /// 서버 원본 기록(클라이언트 동기화용) 목록입니다.
+    /// </summary>
+    private readonly NetworkList<PlayerRaceRecordNet> _raceRecords = new NetworkList<PlayerRaceRecordNet>();
+
+    /// <summary>
+    /// 현재 스테이지 Run 시작 서버 시각(NetworkTime)입니다.
+    /// </summary>
+    private readonly NetworkVariable<double> _currentStageStartAtServerTime = new NetworkVariable<double>(0.0);
+
+    /// <summary>
+    /// 현재 스테이지 인덱스입니다(클라이언트 UI 동기화용).
+    /// </summary>
+    private readonly NetworkVariable<int> _currentStageIndexNet = new NetworkVariable<int>(0);
+
+    /// <summary>
+    /// 첫 도착 이후 목표 윈도우 종료 서버 시각(NetworkTime)입니다.
+    /// </summary>
+    private readonly NetworkVariable<double> _goalWindowEndAtServerTime = new NetworkVariable<double>(0.0);
 
     // Server only: clientId -> resolved stages count (Goal 도착 or Retire 처리 완료)
     private readonly Dictionary<ulong, int> _clearedCountByClient = new Dictionary<ulong, int>(8);
@@ -44,6 +75,132 @@ public sealed class StageProgressController : NetworkBehaviour
 
     // Server only: stageIndex -> run start time (server time)
     private readonly Dictionary<int, double> _stageRunStartTimeByStage = new Dictionary<int, double>();
+
+    /// <summary>
+    /// 클라이언트별 기록 데이터 인덱스 캐시입니다.
+    /// </summary>
+    private readonly Dictionary<ulong, int> _recordIndexByClient = new Dictionary<ulong, int>(8);
+
+    public struct PlayerRaceRecordNet : INetworkSerializable, System.IEquatable<PlayerRaceRecordNet>
+    {
+        /// <summary>
+        /// 플레이어 클라이언트 식별자입니다.
+        /// </summary>
+        public ulong clientId;
+
+        /// <summary>
+        /// 플레이어 표시 이름입니다.
+        /// </summary>
+        public FixedString64Bytes displayName;
+
+        /// <summary>
+        /// Stage1 기록(초)입니다. 미기록은 MissingRecordValue입니다.
+        /// </summary>
+        public float stage1Seconds;
+
+        /// <summary>
+        /// Stage2 기록(초)입니다. 미기록은 MissingRecordValue입니다.
+        /// </summary>
+        public float stage2Seconds;
+
+        /// <summary>
+        /// Stage3 기록(초)입니다. 미기록은 MissingRecordValue입니다.
+        /// </summary>
+        public float stage3Seconds;
+
+        public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+        {
+            serializer.SerializeValue(ref clientId);
+            serializer.SerializeValue(ref displayName);
+            serializer.SerializeValue(ref stage1Seconds);
+            serializer.SerializeValue(ref stage2Seconds);
+            serializer.SerializeValue(ref stage3Seconds);
+        }
+
+        public bool Equals(PlayerRaceRecordNet other)
+        {
+            return clientId == other.clientId
+                && displayName.Equals(other.displayName)
+                && Mathf.Approximately(stage1Seconds, other.stage1Seconds)
+                && Mathf.Approximately(stage2Seconds, other.stage2Seconds)
+                && Mathf.Approximately(stage3Seconds, other.stage3Seconds);
+        }
+    }
+
+    public readonly struct PlayerRaceRecordSnapshot
+    {
+        public PlayerRaceRecordSnapshot(ulong clientId, string displayName, float stage1, float stage2, float stage3)
+        {
+            // 결과 테이블 행이 참조하는 플레이어 식별자입니다.
+            ClientId = clientId;
+            // 결과 테이블 행이 참조하는 플레이어 표시 이름입니다.
+            DisplayName = displayName;
+            // Stage 1 기록 원본 값입니다.
+            Stage1Seconds = stage1;
+            // Stage 2 기록 원본 값입니다.
+            Stage2Seconds = stage2;
+            // Stage 3 기록 원본 값입니다.
+            Stage3Seconds = stage3;
+            // Stage 1 클리어 여부입니다.
+            HasStage1 = stage1 >= 0f;
+            // Stage 2 클리어 여부입니다.
+            HasStage2 = stage2 >= 0f;
+            // Stage 3 클리어 여부입니다.
+            HasStage3 = stage3 >= 0f;
+
+            // 합산 수식 계산에 사용할 스테이지 기록 배열입니다.
+            float[] stageSeconds = { stage1, stage2, stage3 };
+            CompletedStageCount = CountRecordedStages(stageSeconds);
+            TotalSeconds = CalculateTotalSeconds(stageSeconds);
+            HasAnyStageRecorded = CompletedStageCount > 0;
+            IsAllStagesRecorded = CompletedStageCount == stageSeconds.Length;
+        }
+
+        public ulong ClientId { get; }
+        public string DisplayName { get; }
+        public float Stage1Seconds { get; }
+        public float Stage2Seconds { get; }
+        public float Stage3Seconds { get; }
+        public bool HasStage1 { get; }
+        public bool HasStage2 { get; }
+        public bool HasStage3 { get; }
+        public int CompletedStageCount { get; }
+        public float TotalSeconds { get; }
+        public bool HasAnyStageRecorded { get; }
+        public bool IsAllStagesRecorded { get; }
+
+        /// <summary>
+        /// 기록이 존재하는 스테이지 개수를 계산합니다.
+        /// </summary>
+        private static int CountRecordedStages(float[] stageSeconds)
+        {
+            // 기록이 존재하는 스테이지 개수 누적 변수입니다.
+            int count = 0;
+            for (int i = 0; i < stageSeconds.Length; i++)
+            {
+                if (stageSeconds[i] >= 0f)
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Total 계산 수식을 통해 기록이 존재하는 스테이지 시간만 합산합니다.
+        /// </summary>
+        private static float CalculateTotalSeconds(float[] stageSeconds)
+        {
+            // Total 계산 결과 누적 변수입니다.
+            float sum = 0f;
+            for (int i = 0; i < stageSeconds.Length; i++)
+            {
+                if (stageSeconds[i] < 0f)
+                    continue;
+
+                sum += Mathf.Max(0f, stageSeconds[i]);
+            }
+            return sum;
+        }
+    }
 
     private struct StageGoalWindowInfo
     {
@@ -88,6 +245,45 @@ public sealed class StageProgressController : NetworkBehaviour
         public StageArrivalInfo ArrivalInfo { get; }
     }
 
+    /// <summary>
+    /// 현재 서버 기준 스테이지 인덱스를 반환합니다.
+    /// </summary>
+    public int CurrentStageIndex => _currentStageIndexNet.Value;
+
+    /// <summary>
+    /// 전체 스테이지 개수를 반환합니다.
+    /// </summary>
+    public int StagesToFinish => _stagesToFinish;
+
+    /// <summary>
+    /// 현재 스테이지의 시작 서버 시각을 반환합니다.
+    /// </summary>
+    public double CurrentStageStartAtServerTime => _currentStageStartAtServerTime.Value;
+
+    /// <summary>
+    /// 현재 스테이지의 목표 윈도우 종료 서버 시각을 반환합니다.
+    /// </summary>
+    public double GoalWindowEndAtServerTime => _goalWindowEndAtServerTime.Value;
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Debug.LogWarning("[StageProgress] Awake fallback 발생: duplicate StageProgressController. Destroy duplicate.");
+            Destroy(gameObject);
+            return;
+        }
+
+        Instance = this;
+    }
+
+    public override void OnDestroy()
+    {
+        base.OnDestroy();
+        if (Instance == this)
+            Instance = null;
+    }
+
     private void Update()
     {
         if (!IsServer) return;
@@ -99,6 +295,7 @@ public sealed class StageProgressController : NetworkBehaviour
         if (IsServer)
         {
             RebuildFromConnectedClients();
+            RebuildRaceRecordTable_Server();
 
             NetworkManager.OnClientConnectedCallback += OnClientConnected_Server;
             NetworkManager.OnClientDisconnectCallback += OnClientDisconnected_Server;
@@ -167,8 +364,11 @@ public sealed class StageProgressController : NetworkBehaviour
                 // 세션 리셋과 동일 타이밍: 입력 열기 + 스테이지 진행 데이터 리셋
                 SetGateForLocalPlayerRpc(true, E_InputGateReason.Lobby);
                 _currentStageIndex = 0;
+                _currentStageIndexNet.Value = _currentStageIndex;
+                _goalWindowEndAtServerTime.Value = 0.0;
 
                 RebuildFromConnectedClients();
+                RebuildRaceRecordTable_Server();
                 Debug.Log("[StageProgress] Sync by GameSession: Lobby -> Gate Close + Rebuild.");
                 break;
 
@@ -207,12 +407,17 @@ public sealed class StageProgressController : NetworkBehaviour
         if (prev == E_GameSessionState.Lobby)
         {
             _currentStageIndex = 0;
+            _currentStageIndexNet.Value = _currentStageIndex;
+            _goalWindowEndAtServerTime.Value = 0.0;
+
             return;
         }
 
         if (prev == E_GameSessionState.Result)
         {
             _currentStageIndex = Mathf.Clamp(_currentStageIndex + 1, 0, Mathf.Max(0, _stagesToFinish - 1));
+            _currentStageIndexNet.Value = _currentStageIndex;
+            _goalWindowEndAtServerTime.Value = 0.0;
         }
     }
 
@@ -298,6 +503,7 @@ public sealed class StageProgressController : NetworkBehaviour
         // ===== 핵심 변경: 첫 Goal 도착 시점부터 60초 시작 =====
         // 늦게 보고한 경우 Retire 처리 + 기록=firstGoal+90초
         RegisterGoalArrivalOrRetire_Server(sender, stageIndex, now);
+        ApplyStageRecordToRaceTable_Server(sender, stageIndex);
 
         int newCount = _clearedCountByClient[sender] + 1;
         _clearedCountByClient[sender] = newCount;
@@ -362,6 +568,7 @@ public sealed class StageProgressController : NetworkBehaviour
             windowInfo.firstGoalServerTime = reportTime;
             windowInfo.goalWindowEndServerTime = reportTime + windowSec;
             windowInfo.retireResolvedApplied = false;
+            _goalWindowEndAtServerTime.Value = windowInfo.goalWindowEndServerTime;
 
             Debug.Log($"[StageProgress] First goal arrival -> start window. stageIndex={stageIndex}, sender={sender}, firstGoalAt={reportTime:F3}, windowEndAt={windowInfo.goalWindowEndServerTime:F3}");
         }
@@ -467,6 +674,7 @@ public sealed class StageProgressController : NetworkBehaviour
 
                     Debug.LogWarning($"[StageProgress] Retire(timeout). clientId={id}, stageIndex={stageIndex}, windowEnd={windowInfo.goalWindowEndServerTime:F3}, record={finalRecordSecondsFromStageStart:F3}s");
 
+                    ApplyStageRecordToRaceTable_Server(id, stageIndex);
                     CloseGateForClient_Server(id, E_InputGateReason.Goal);
                     StopPlayerMovement_Server(id, "retire_timeout");
                 }
@@ -803,6 +1011,8 @@ public sealed class StageProgressController : NetworkBehaviour
         _goalWindowByStage.Clear();
         _arrivalByStage.Clear();
         _stageRunStartTimeByStage.Clear();
+        _currentStageStartAtServerTime.Value = 0.0;
+        _goalWindowEndAtServerTime.Value = 0.0;
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
@@ -828,6 +1038,7 @@ public sealed class StageProgressController : NetworkBehaviour
 
         double startTime = nm.ServerTime.Time;
         _stageRunStartTimeByStage[stageIndex] = startTime;
+        _currentStageStartAtServerTime.Value = startTime;
 
         Debug.Log($"[StageProgress] Stage run start time recorded. stageIndex={stageIndex}, startTime={startTime:F3}");
     }
@@ -851,6 +1062,7 @@ public sealed class StageProgressController : NetworkBehaviour
 
         _clearedCountByClient[clientId] = 0;
         _clearedStageSetByClient[clientId] = new HashSet<int>();
+        AddRaceRecordIfMissing_Server(clientId);
 
         Debug.Log($"[StageProgress] Client connected tracked. clientId={clientId}");
     }
@@ -860,6 +1072,7 @@ public sealed class StageProgressController : NetworkBehaviour
         if (_clearedCountByClient.Remove(clientId))
         {
             _clearedStageSetByClient.Remove(clientId);
+            RemoveRaceRecord_Server(clientId);
             Debug.Log($"[StageProgress] Client disconnected removed. clientId={clientId}");
         }
 
@@ -901,5 +1114,179 @@ public sealed class StageProgressController : NetworkBehaviour
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 로컬 클라이언트의 표시 이름을 서버 원본 기록 테이블에 반영합니다.
+    /// </summary>
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void SubmitDisplayNameRpc(FixedString64Bytes displayName, RpcParams rpcParams = default)
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[StageProgress] SubmitDisplayName fallback 발생: called on non-server.");
+            return;
+        }
+
+        // 이름을 제출한 플레이어의 클라이언트 식별자입니다.
+        ulong sender = rpcParams.Receive.SenderClientId;
+        if (!_recordIndexByClient.TryGetValue(sender, out int index))
+        {
+            AddRaceRecordIfMissing_Server(sender);
+            if (!_recordIndexByClient.TryGetValue(sender, out index))
+                return;
+        }
+
+        // 비어있는 이름을 방지하기 위해 기본 표시 이름을 사용합니다.
+        string sanitizedName = string.IsNullOrWhiteSpace(displayName.ToString()) ? BuildDefaultDisplayName(sender) : displayName.ToString().Trim();
+        if (sanitizedName.Length > 24)
+            sanitizedName = sanitizedName.Substring(0, 24);
+
+        var record = _raceRecords[index];
+        record.displayName = new FixedString64Bytes(sanitizedName);
+        _raceRecords[index] = record;
+    }
+
+    /// <summary>
+    /// 클라이언트 UI에서 사용할 레이스 기록 스냅샷을 반환합니다.
+    /// </summary>
+    public bool TryGetRaceRecordsSnapshot(out List<PlayerRaceRecordSnapshot> orderedRecords)
+    {
+        orderedRecords = new List<PlayerRaceRecordSnapshot>(_raceRecords.Count);
+
+        for (int i = 0; i < _raceRecords.Count; i++)
+        {
+            var e = _raceRecords[i];
+            orderedRecords.Add(new PlayerRaceRecordSnapshot(e.clientId, e.displayName.ToString(), e.stage1Seconds, e.stage2Seconds, e.stage3Seconds));
+        }
+
+        orderedRecords = orderedRecords
+            .OrderBy(e => e.HasAnyStageRecorded ? 0 : 1)
+            .ThenBy(e => e.HasAnyStageRecorded ? e.TotalSeconds : float.MaxValue)
+            .ThenBy(e => e.DisplayName)
+            .ThenBy(e => e.ClientId)
+            .ToList();
+
+        return true;
+    }
+
+    /// <summary>
+    /// 현재 로컬 플레이어가 특정 스테이지 기록을 확정했는지 확인합니다.
+    /// </summary>
+    public bool TryGetPlayerStageRecord(ulong clientId, int stageIndex, out float stageRecordSeconds)
+    {
+        stageRecordSeconds = MissingRecordValue;
+
+        if (_recordIndexByClient.TryGetValue(clientId, out int idx))
+        {
+            var recordByIndex = _raceRecords[idx];
+            stageRecordSeconds = GetStageRecordByIndex(recordByIndex, stageIndex);
+            return stageRecordSeconds >= 0f;
+        }
+
+        for (int i = 0; i < _raceRecords.Count; i++)
+        {
+            if (_raceRecords[i].clientId != clientId)
+                continue;
+
+            stageRecordSeconds = GetStageRecordByIndex(_raceRecords[i], stageIndex);
+            return stageRecordSeconds >= 0f;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 서버 연결 클라이언트 기준으로 기록 테이블을 재구성합니다.
+    /// </summary>
+    private void RebuildRaceRecordTable_Server()
+    {
+        _raceRecords.Clear();
+        _recordIndexByClient.Clear();
+
+        foreach (ulong id in NetworkManager.ConnectedClientsIds.OrderBy(v => v))
+        {
+            AddRaceRecordIfMissing_Server(id);
+        }
+    }
+
+    /// <summary>
+    /// 서버 기록 테이블에 플레이어 기본 행을 추가합니다.
+    /// </summary>
+    private void AddRaceRecordIfMissing_Server(ulong clientId)
+    {
+        if (_recordIndexByClient.ContainsKey(clientId))
+            return;
+
+        var entry = new PlayerRaceRecordNet
+        {
+            clientId = clientId,
+            displayName = new FixedString64Bytes(BuildDefaultDisplayName(clientId)),
+            stage1Seconds = MissingRecordValue,
+            stage2Seconds = MissingRecordValue,
+            stage3Seconds = MissingRecordValue,
+        };
+
+        _raceRecords.Add(entry);
+        _recordIndexByClient[clientId] = _raceRecords.Count - 1;
+    }
+
+    /// <summary>
+    /// 서버 기록 테이블에서 플레이어 행을 제거합니다.
+    /// </summary>
+    private void RemoveRaceRecord_Server(ulong clientId)
+    {
+        if (!_recordIndexByClient.TryGetValue(clientId, out int index))
+            return;
+
+        _raceRecords.RemoveAt(index);
+        _recordIndexByClient.Clear();
+        for (int i = 0; i < _raceRecords.Count; i++)
+        {
+            _recordIndexByClient[_raceRecords[i].clientId] = i;
+        }
+    }
+
+    /// <summary>
+    /// 서버 원본 도착 정보를 레이스 기록 테이블로 반영합니다.
+    /// </summary>
+    private void ApplyStageRecordToRaceTable_Server(ulong clientId, int stageIndex)
+    {
+        if (!_arrivalByStage.TryGetValue(stageIndex, out var arrivals))
+            return;
+        if (!arrivals.TryGetValue(clientId, out var arrivalInfo))
+            return;
+
+        AddRaceRecordIfMissing_Server(clientId);
+        if (!_recordIndexByClient.TryGetValue(clientId, out int index))
+            return;
+
+        var record = _raceRecords[index];
+        float stageSeconds = Mathf.Max(0f, (float)arrivalInfo.finalRecordSecondsFromStageStart);
+
+        if (stageIndex == 0) record.stage1Seconds = stageSeconds;
+        else if (stageIndex == 1) record.stage2Seconds = stageSeconds;
+        else if (stageIndex == 2) record.stage3Seconds = stageSeconds;
+
+        _raceRecords[index] = record;
+    }
+
+    /// <summary>
+    /// 스테이지 인덱스에 맞는 기록값을 반환합니다.
+    /// </summary>
+    private float GetStageRecordByIndex(PlayerRaceRecordNet record, int stageIndex)
+    {
+        if (stageIndex == 0) return record.stage1Seconds;
+        if (stageIndex == 1) return record.stage2Seconds;
+        if (stageIndex == 2) return record.stage3Seconds;
+        return MissingRecordValue;
+    }
+
+    /// <summary>
+    /// 표시 이름이 없을 때 사용할 기본 이름을 생성합니다.
+    /// </summary>
+    private string BuildDefaultDisplayName(ulong clientId)
+    {
+        return $"Player {clientId}";
     }
 }

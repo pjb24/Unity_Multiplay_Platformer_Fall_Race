@@ -85,7 +85,7 @@ public sealed class GameSessionController : NetworkBehaviour
     // ============================
     [Header("Timings (seconds)")]
     [SerializeField] private double _countdownSeconds = 3.0;
-    [SerializeField] private double _resultSeconds = 2.0;
+    [SerializeField] private double _resultSeconds = 5.0;
 
     // ============================
     // Network State
