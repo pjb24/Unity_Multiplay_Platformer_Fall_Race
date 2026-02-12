@@ -10,6 +10,9 @@ public sealed class StageGoalTrigger : MonoBehaviour
 
     private bool _reported;
 
+    // 세션 상태 차단 로그를 1회만 출력하기 위한 플래그.
+    private bool _hasLoggedSessionBlocked;
+
     private void Awake()
     {
         if (_stageProgress == null)
@@ -32,6 +35,9 @@ public sealed class StageGoalTrigger : MonoBehaviour
     {
         if (_triggerOnce && _reported) return;
 
+        if (!IsRunningSessionInteractionAllowed())
+            return;
+
         var netObject = other.GetComponentInParent<NetworkObject>();
         if (netObject == null || !netObject.IsOwner)
             return;
@@ -44,5 +50,36 @@ public sealed class StageGoalTrigger : MonoBehaviour
 
         _stageProgress.ReportStageClearedRpc(_stageIndex);
         _reported = true;
+    }
+
+    /// <summary>
+    /// 게임 세션이 Running 상태일 때만 골 상호작용을 허용한다.
+    /// </summary>
+    private bool IsRunningSessionInteractionAllowed()
+    {
+        // 현재 씬의 세션 상태를 제공하는 컨트롤러 참조.
+        var sessionController = GameSessionController.Instance;
+        if (sessionController == null)
+        {
+            if (!_hasLoggedSessionBlocked)
+            {
+                _hasLoggedSessionBlocked = true;
+                Debug.LogWarning("[StageGoalTrigger] Session gate fallback 발생: GameSessionController is null. Block interaction.");
+            }
+            return false;
+        }
+
+        if (sessionController.State != E_GameSessionState.Running)
+        {
+            if (!_hasLoggedSessionBlocked)
+            {
+                _hasLoggedSessionBlocked = true;
+                Debug.Log($"[StageGoalTrigger] Session gate 차단: state={sessionController.State}");
+            }
+            return false;
+        }
+
+        _hasLoggedSessionBlocked = false;
+        return true;
     }
 }
