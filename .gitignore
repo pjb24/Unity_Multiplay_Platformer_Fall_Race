@@ -100,3 +100,6 @@ InitTestScene*.unity*
 
 /[Aa]ssets/TextMesh Pro/
 /[Aa]ssets/TextMesh Pro.meta
+
+/[Aa]ssets/ThirdParty/*
+/[Aa]ssets/Resources/ThirdParty/*

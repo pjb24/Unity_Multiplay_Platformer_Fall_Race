@@ -401,12 +401,60 @@ public sealed class StageProgressController : NetworkBehaviour
 
             case E_GameSessionState.Result:
                 SetGateForLocalPlayerRpc(false, E_InputGateReason.Result);
+                ApplyResultFeelingToPlayers_Server();
                 Debug.Log("[StageProgress] Sync by GameSession: Result -> Gate Close.");
                 break;
 
             default:
                 Debug.LogWarning($"[StageProgress] GameSessionState fallback 발생: unknown state={next}");
                 break;
+        }
+    }
+
+    /// <summary>
+    /// 경기 종료 시 상위 75%는 win(0), 하위 25%는 lose(1)로 feel 연출을 동기화합니다.
+    /// 동점 처리는 CompletedStageCount + TotalSeconds가 같은 경우 동일 rank로 간주합니다.
+    /// </summary>
+    private void ApplyResultFeelingToPlayers_Server()
+    {
+        if (!IsServer)
+            return;
+
+        if (!TryGetRaceRecordsSnapshot(out List<PlayerRaceRecordSnapshot> orderedRecords) || orderedRecords == null || orderedRecords.Count == 0)
+            return;
+
+        int totalPlayers = orderedRecords.Count;
+        int winCutRank = Mathf.CeilToInt(totalPlayers * 0.75f);
+        if (winCutRank <= 0)
+            winCutRank = 1;
+
+        int currentRank = 1;
+        for (int i = 0; i < orderedRecords.Count; i++)
+        {
+            PlayerRaceRecordSnapshot record = orderedRecords[i];
+            if (i > 0)
+            {
+                PlayerRaceRecordSnapshot prev = orderedRecords[i - 1];
+                bool isTie = prev.CompletedStageCount == record.CompletedStageCount
+                    && Mathf.Approximately(prev.TotalSeconds, record.TotalSeconds);
+                if (!isTie)
+                    currentRank = i + 1;
+            }
+
+            float blendFeel = currentRank <= winCutRank ? 0f : 1f;
+
+            if (!NetworkManager.ConnectedClients.TryGetValue(record.ClientId, out NetworkClient networkClient))
+                continue;
+
+            NetworkObject playerObject = networkClient.PlayerObject;
+            if (playerObject == null)
+                continue;
+
+            PlayerMotorServer motor = playerObject.GetComponent<PlayerMotorServer>();
+            if (motor == null)
+                continue;
+
+            motor.SetResultFeeling_Server(blendFeel);
         }
     }
 

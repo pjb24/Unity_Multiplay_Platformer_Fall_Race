@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -39,6 +40,33 @@ public struct ReadyEntry : INetworkSerializable, IEquatable<ReadyEntry>
         => HashCode.Combine(clientId, isReady);
 }
 
+public struct CharacterAssignmentEntry : INetworkSerializable, IEquatable<CharacterAssignmentEntry>
+{
+    /// <summary>배정 대상 클라이언트 ID입니다.</summary>
+    public ulong clientId;
+    /// <summary>배정된 캐릭터 ID입니다.</summary>
+    public FixedString64Bytes characterId;
+    /// <summary>fallback(캡슐) 사용 여부입니다.</summary>
+    public bool isFallback;
+
+    public CharacterAssignmentEntry(ulong clientId, string characterId, bool isFallback)
+    {
+        this.clientId = clientId;
+        this.characterId = new FixedString64Bytes(characterId ?? string.Empty);
+        this.isFallback = isFallback;
+    }
+
+    public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+    {
+        serializer.SerializeValue(ref clientId);
+        serializer.SerializeValue(ref characterId);
+        serializer.SerializeValue(ref isFallback);
+    }
+
+    public bool Equals(CharacterAssignmentEntry other)
+        => clientId == other.clientId && characterId.Equals(other.characterId) && isFallback == other.isFallback;
+}
+
 public sealed class GameSessionController : NetworkBehaviour
 {
     // ============================
@@ -51,6 +79,7 @@ public sealed class GameSessionController : NetworkBehaviour
 
     // 읽기 전용으로 쓰고, 수정은 Server만
     public NetworkList<ReadyEntry> ReadyList => _readyList;
+    public NetworkList<CharacterAssignmentEntry> CharacterAssignments => _characterAssignments;
 
     // ============================
     // Local Event Relay (NOT exposed as event)
@@ -80,12 +109,58 @@ public sealed class GameSessionController : NetworkBehaviour
         _onStateChanged -= listener;
     }
 
+    public void AddCharacterAssignmentListener(Action<CharacterAssignmentEntry, NetworkListEvent<CharacterAssignmentEntry>.EventType> listener)
+    {
+        if (listener == null)
+        {
+            Debug.LogWarning("[GameSession] AddCharacterAssignmentListener fallback 발생: listener is null.");
+            return;
+        }
+
+        _onCharacterAssignmentChanged -= listener;
+        _onCharacterAssignmentChanged += listener;
+    }
+
+    public void RemoveCharacterAssignmentListener(Action<CharacterAssignmentEntry, NetworkListEvent<CharacterAssignmentEntry>.EventType> listener)
+    {
+        if (listener == null)
+        {
+            Debug.LogWarning("[GameSession] RemoveCharacterAssignmentListener fallback 발생: listener is null.");
+            return;
+        }
+
+        _onCharacterAssignmentChanged -= listener;
+    }
+
+    public bool TryGetAssignedCharacter(ulong clientId, out string characterId, out bool isFallback)
+    {
+        characterId = string.Empty;
+        isFallback = true;
+
+        for (int i = 0; i < _characterAssignments.Count; i++)
+        {
+            CharacterAssignmentEntry entry = _characterAssignments[i];
+            if (entry.clientId != clientId)
+                continue;
+
+            characterId = entry.characterId.ToString();
+            isFallback = entry.isFallback;
+            return true;
+        }
+
+        return false;
+    }
+
     // ============================
     // Tunables
     // ============================
     [Header("Timings (seconds)")]
     [SerializeField] private double _countdownSeconds = 3.0;
     [SerializeField] private double _resultSeconds = 5.0;
+
+    [Header("Character Assignment")]
+    [SerializeField] private List<string> _defaultCharacterIds = new List<string> { "Character_A", "Character_B", "Character_C", "Character_D", "Character_E", "Character_F" };
+    [SerializeField] private string _fallbackCharacterId = "capsule_fallback";
 
     // ============================
     // Network State
@@ -102,6 +177,7 @@ public sealed class GameSessionController : NetworkBehaviour
         new NetworkVariable<double>(0.0);
 
     private NetworkList<ReadyEntry> _readyList = new NetworkList<ReadyEntry>();
+    private NetworkList<CharacterAssignmentEntry> _characterAssignments = new NetworkList<CharacterAssignmentEntry>();
 
     // Countdown 진입 시 LockLobby 트리거 1회 보장 플래그
     private bool _lobbyLockRequested;
@@ -114,6 +190,11 @@ public sealed class GameSessionController : NetworkBehaviour
     // ============================
     // "플레이 데이터 정리"용: 실제 게임 시스템(타이머/기록/스폰 등) 붙으면 여기에 확장
     private readonly Dictionary<ulong, PlayerRuntimeData> _playerRuntime = new Dictionary<ulong, PlayerRuntimeData>(8);
+    private readonly Dictionary<ulong, string> _assignedCharacterIdByClient = new Dictionary<ulong, string>(8);
+    private readonly HashSet<string> _usedCharacterIds = new HashSet<string>();
+    private readonly System.Random _characterRandom = new System.Random();
+
+    private Action<CharacterAssignmentEntry, NetworkListEvent<CharacterAssignmentEntry>.EventType> _onCharacterAssignmentChanged;
 
     private struct PlayerRuntimeData
     {
@@ -160,6 +241,7 @@ public sealed class GameSessionController : NetworkBehaviour
 
         // Host 종료 감지(클라 관점): 연결이 끊기면 "세션 종료" 로그를 남긴다.
         nm.OnClientDisconnectCallback += OnClientDisconnected_Any;
+        _characterAssignments.OnListChanged += OnCharacterAssignmentsChanged;
 
         if (!IsServer) return;
 
@@ -170,6 +252,7 @@ public sealed class GameSessionController : NetworkBehaviour
         StartCoroutine(RebuildNextFrame());
 
         nm.OnClientConnectedCallback += OnClientConnected_Server;
+        AssignCharactersForConnectedClients_Server();
         // 서버는 위 OnClientDisconnected_Any에서 분기 처리(중복구독 방지)
     }
 
@@ -188,6 +271,8 @@ public sealed class GameSessionController : NetworkBehaviour
                 nm.OnClientConnectedCallback -= OnClientConnected_Server;
             }
         }
+
+        _characterAssignments.OnListChanged -= OnCharacterAssignmentsChanged;
     }
 
     private void HookStateChangedOnce()
@@ -209,6 +294,11 @@ public sealed class GameSessionController : NetworkBehaviour
     private void HandleStateChanged_Internal(E_GameSessionState prev, E_GameSessionState next)
     {
         _onStateChanged?.Invoke(prev, next);
+    }
+
+    private void OnCharacterAssignmentsChanged(NetworkListEvent<CharacterAssignmentEntry> listEvent)
+    {
+        _onCharacterAssignmentChanged?.Invoke(listEvent.Value, listEvent.Type);
     }
 
     private void Update()
@@ -250,7 +340,71 @@ public sealed class GameSessionController : NetworkBehaviour
         {
             RebuildReadyListForLobby_Server();
             RebuildRuntimeDataForLobby_Server();
+            RebuildCharacterAssignmentsForLobby_Server();
         }
+    }
+
+    private void AssignCharactersForConnectedClients_Server()
+    {
+        if (!IsServer || NetworkManager == null)
+            return;
+
+        var connected = NetworkManager.ConnectedClientsIds;
+        for (int i = 0; i < connected.Count; i++)
+            AssignCharacterIfMissing_Server(connected[i]);
+    }
+
+    private void AssignCharacterIfMissing_Server(ulong clientId)
+    {
+        if (_assignedCharacterIdByClient.ContainsKey(clientId))
+            return;
+
+        List<string> registeredIds = CharacterCatalogRuntime.BuildRegisteredCharacterIds();
+        if (registeredIds.Count == 0)
+            registeredIds = new List<string>(_defaultCharacterIds);
+
+        var availableIds = new List<string>(registeredIds.Count);
+        for (int i = 0; i < registeredIds.Count; i++)
+        {
+            string candidateId = registeredIds[i];
+            if (string.IsNullOrEmpty(candidateId))
+                continue;
+
+            if (_usedCharacterIds.Contains(candidateId))
+                continue;
+
+            availableIds.Add(candidateId);
+        }
+
+        bool useFallback = availableIds.Count == 0;
+        string assignedId = useFallback
+            ? _fallbackCharacterId
+            : availableIds[_characterRandom.Next(0, availableIds.Count)];
+
+        if (string.IsNullOrEmpty(assignedId))
+            assignedId = _fallbackCharacterId;
+
+        _assignedCharacterIdByClient[clientId] = assignedId;
+
+        if (!useFallback)
+            _usedCharacterIds.Add(assignedId);
+
+        UpsertCharacterAssignmentEntry_Server(clientId, assignedId, useFallback);
+    }
+
+    private void UpsertCharacterAssignmentEntry_Server(ulong clientId, string characterId, bool isFallback)
+    {
+        CharacterAssignmentEntry entry = new CharacterAssignmentEntry(clientId, characterId, isFallback);
+        for (int i = 0; i < _characterAssignments.Count; i++)
+        {
+            if (_characterAssignments[i].clientId != clientId)
+                continue;
+
+            _characterAssignments[i] = entry;
+            return;
+        }
+
+        _characterAssignments.Add(entry);
     }
 
     // ============================
@@ -436,6 +590,7 @@ public sealed class GameSessionController : NetworkBehaviour
 
         // 런타임 플레이 데이터 리셋(현재 접속자 기준으로 재구성, 타이머/기록/스폰 등 붙이면 여기서 초기화)
         RebuildRuntimeDataForLobby_Server();
+        RebuildCharacterAssignmentsForLobby_Server();
 
         // 다음 매치에서 다시 LockLobby 트리거 가능하도록 플래그 리셋
         _lobbyLockRequested = false;
@@ -486,6 +641,22 @@ public sealed class GameSessionController : NetworkBehaviour
                 wasInSession = false,
             };
         }
+    }
+
+    private void RebuildCharacterAssignmentsForLobby_Server()
+    {
+        if (!IsServer)
+        {
+            Debug.LogWarning("[GameSession] RebuildCharacterAssignments fallback 발생: called on non-server.");
+            return;
+        }
+
+        _assignedCharacterIdByClient.Clear();
+        _usedCharacterIds.Clear();
+        _characterAssignments.Clear();
+
+        foreach (ulong id in NetworkManager.ConnectedClientsIds)
+            AssignCharacterIfMissing_Server(id);
     }
 
     // ============================
@@ -552,6 +723,8 @@ public sealed class GameSessionController : NetworkBehaviour
                 wasInSession = false,
             };
         }
+
+        AssignCharacterIfMissing_Server(clientId);
     }
 
     // 공용 Disconnect 콜백: 서버/클라 분기
@@ -589,6 +762,19 @@ public sealed class GameSessionController : NetworkBehaviour
 
     private void CleanupPlayerData_Server(ulong clientId)
     {
+        if (_assignedCharacterIdByClient.TryGetValue(clientId, out string assignedId))
+        {
+            _assignedCharacterIdByClient.Remove(clientId);
+            if (!string.IsNullOrEmpty(assignedId) && !string.Equals(assignedId, _fallbackCharacterId, StringComparison.Ordinal))
+                _usedCharacterIds.Remove(assignedId);
+
+            for (int i = _characterAssignments.Count - 1; i >= 0; i--)
+            {
+                if (_characterAssignments[i].clientId == clientId)
+                    _characterAssignments.RemoveAt(i);
+            }
+        }
+
         // Host가 나가는 케이스는 별도 정책이 필요하지만, 현재 요구사항은 "남은 인원으로 유지"가 우선.
         // 일단 데이터만 제거한다.
         if (_playerRuntime.Remove(clientId))

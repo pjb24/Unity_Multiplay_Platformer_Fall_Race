@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c853804f7c8bb644ca0eecb3b28c08ad, type: 3}
+  m_Name: CharacterCatalog
+  m_EditorClassIdentifier: Assembly-CSharp::CharacterCatalog
+  _characters:
+  - characterId: Character_4c4e64
+    loaderKey: ThirdParty/Characters/Character_4c4e64
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  - characterId: Character_6dd688
+    loaderKey: ThirdParty/Characters/Character_6dd688
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  - characterId: Character_8d9656
+    loaderKey: ThirdParty/Characters/Character_8d9656
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  - characterId: Character_040ae0
+    loaderKey: ThirdParty/Characters/Character_040ae0
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  - characterId: Character_0413da
+    loaderKey: ThirdParty/Characters/Character_0413da
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  - characterId: Character_cbb54a
+    loaderKey: ThirdParty/Characters/Character_cbb54a
+    version: 2026.02.13
+    hash: 
+    animatorController: {fileID: 0}
+  _fallbackCharacterId: capsule_fallback
+  _fallbackLoaderKey: fallback/capsule
