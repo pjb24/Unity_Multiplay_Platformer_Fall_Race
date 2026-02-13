@@ -22,8 +22,28 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     }
 
     [Header("Move")]
-    [SerializeField] private float _moveSpeed = 6f;
-    [SerializeField] private float _airControl = 0.5f;
+    /// <summary>달리기 기준 최대 이동 속도입니다.</summary>
+    [SerializeField] private float _maxSpeed = 6f;
+    /// <summary>입력이 있을 때 목표 속도로 접근하는 지상 가속도입니다.</summary>
+    [SerializeField] private float _acceleration = 28f;
+    /// <summary>입력이 없을 때 정지로 감속하는 지상 감속도입니다.</summary>
+    [SerializeField] private float _deceleration = 34f;
+    /// <summary>반대 방향으로 전환할 때 적용하는 가속도입니다.</summary>
+    [SerializeField] private float _turnAcceleration = 38f;
+    /// <summary>공중 상태에서 적용하는 기본 가속도입니다.</summary>
+    [SerializeField] private float _airAcceleration = 12f;
+    /// <summary>공중 상태에서 허용할 제어 비율(0~1)입니다.</summary>
+    [SerializeField, Range(0f, 1f)] private float _airControl = 0.5f;
+    /// <summary>달리기/걷기 분기 기준 입력 강도입니다.</summary>
+    [SerializeField, Range(0f, 1f)] private float _runInputThreshold = 0.65f;
+    /// <summary>걷기 상태에서 적용할 최대 속도 계수입니다.</summary>
+    [SerializeField, Range(0.1f, 1f)] private float _walkSpeedMultiplier = 0.6f;
+    /// <summary>미세 입력 노이즈 제거를 위한 데드존 값입니다.</summary>
+    [SerializeField, Range(0f, 0.5f)] private float _inputDeadZone = 0.1f;
+    /// <summary>정지 스냅에 사용하는 수평 속도 임계값입니다.</summary>
+    [SerializeField] private float _stopThreshold = 0.05f;
+    /// <summary>경사면 이동 허용 최대 각도입니다.</summary>
+    [SerializeField, Range(0f, 89f)] private float _maxSlopeAngle = 50f;
     /// <summary>초당 회전 각도(도 단위)입니다.</summary>
     [SerializeField] private float _rotationSpeedDegPerSec = 540f;
     /// <summary>회전을 시작할 최소 이동 입력 제곱 크기 임계값입니다.</summary>
@@ -41,7 +61,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private float _defaultKnockbackControlLockSec = 0.2f;
 
     [Header("Animation Threshold")]
+    /// <summary>달리기 상태로 판단할 최소 수평 속도 임계값입니다.</summary>
     [SerializeField] private float _runSpeedThreshold = 0.15f;
+    /// <summary>점프 후 낙하 상태로 전환하는 최소 낙하 거리 임계값입니다.</summary>
     [SerializeField] private float _fallDistanceFromLiftOffThreshold = 0.15f;
 
     [Header("Animation Param Names")]
@@ -66,6 +88,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
     /// <summary>서버가 수신한 최신 이동 입력 벡터입니다.</summary>
     private Vector2 _move;
+    /// <summary>이동 입력에서 분리한 정규화 방향 벡터입니다.</summary>
+    private Vector3 _inputDirection;
+    /// <summary>이동 입력에서 분리한 강도(0~1) 값입니다.</summary>
+    private float _inputStrength;
     /// <summary>서버가 수신한 점프 입력 래치입니다.</summary>
     private bool _jumpDown;
     /// <summary>입력 역행 방지용 tick 값입니다.</summary>
@@ -88,6 +114,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     private bool _fallStateLockedUntilGrounded;
     /// <summary>애니메이션 상태 전환 중복 방지 캐시입니다.</summary>
     private MotionAnimState _lastAnimState = MotionAnimState.Idle;
+    /// <summary>이번 프레임에 착지했는지 추적하는 플래그입니다.</summary>
+    private bool _landedThisFrame;
 
     /// <summary>서버에서 결과 연출 활성화를 동기화하는 플래그입니다.</summary>
     private readonly NetworkVariable<bool> _resultFeelActive = new NetworkVariable<bool>(false);
@@ -144,6 +172,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         _tick = tick;
         _move = Vector2.ClampMagnitude(move, 1f);
+        BuildNormalizedInput(_move, out _inputDirection, out _inputStrength);
 
         // 덮어쓰기 금지: 점프 엣지 누적
         _jumpDown |= jumpDown;
@@ -238,6 +267,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             return;
         }
 
+        // 이동 계산 전 접지/충돌 상태를 먼저 갱신합니다.
         bool grounded = TryGetGroundHit(out RaycastHit hit);
         Vector3 platformVelocity = Vector3.zero;
         if (grounded)
@@ -248,31 +278,53 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         }
 
         // 이동
-        float control = grounded ? 1f : _airControl;
-        Vector3 wish = new Vector3(_move.x, 0f, _move.y) * (_moveSpeed * control);
+        float stateSpeedMultiplier = _inputStrength >= _runInputThreshold ? 1f : _walkSpeedMultiplier;
+        float maxStateSpeed = _maxSpeed * stateSpeedMultiplier;
+        float controlRatio = grounded ? 1f : Mathf.Clamp01(_airControl);
 
-        // 입력 이동 방향 기준으로 캐릭터 회전을 갱신합니다.
-        RotateCharacter_Server(new Vector3(_move.x, 0f, _move.y));
+        Vector3 movePlaneNormal = GetMovePlaneNormal(grounded, hit);
+        Vector3 targetHorizontalVelocity = Vector3.ProjectOnPlane(_inputDirection * (_inputStrength * maxStateSpeed), movePlaneNormal);
+        targetHorizontalVelocity *= controlRatio;
+        if (grounded)
+            targetHorizontalVelocity += new Vector3(platformVelocity.x, 0f, platformVelocity.z);
 
-        Vector3 vCur = _rb.linearVelocity;
+        Vector3 currentVelocity = _rb.linearVelocity;
+        Vector3 currentHorizontalVelocity = new Vector3(currentVelocity.x, 0f, currentVelocity.z);
+        float accelerationRate = GetAccelerationRate(grounded, currentHorizontalVelocity, targetHorizontalVelocity);
+        Vector3 nextHorizontalVelocity = Vector3.MoveTowards(
+            currentHorizontalVelocity,
+            targetHorizontalVelocity,
+            accelerationRate * Time.fixedDeltaTime);
+
+        float maxHorizontalMagnitude = (grounded ? maxStateSpeed : maxStateSpeed * controlRatio) + new Vector3(platformVelocity.x, 0f, platformVelocity.z).magnitude;
+        nextHorizontalVelocity = Vector3.ClampMagnitude(nextHorizontalVelocity, maxHorizontalMagnitude);
+        if (_inputStrength <= 0f && nextHorizontalVelocity.magnitude <= _stopThreshold)
+            nextHorizontalVelocity = Vector3.zero;
+
+        // 현재 수평 속도 방향 기준으로 캐릭터 회전을 갱신합니다.
+        RotateCharacter_Server(nextHorizontalVelocity);
 
         bool lockedByKnockback = Time.time < _knockbackControlLockUntil;
         if (!lockedByKnockback)
         {
-            vCur.x = wish.x + platformVelocity.x;
-            vCur.z = wish.z + platformVelocity.z;
-            _rb.linearVelocity = vCur;
+            // XZ 수평 이동만 갱신하고 Y 수직 속도는 보존합니다.
+            currentVelocity.x = nextHorizontalVelocity.x;
+            currentVelocity.z = nextHorizontalVelocity.z;
+            _rb.linearVelocity = currentVelocity;
         }
 
         // 점프(1단)
         if (_jumpDown && grounded)
         {
-            vCur = _rb.linearVelocity;
-            vCur.y = _jumpVelocity;
-            vCur.x += platformVelocity.x * Mathf.Clamp01(_jumpPlatformVelocityInherit);
-            vCur.z += platformVelocity.z * Mathf.Clamp01(_jumpPlatformVelocityInherit);
-            _rb.linearVelocity = vCur;
+            currentVelocity = _rb.linearVelocity;
+            currentVelocity.y = _jumpVelocity;
+            currentVelocity.x += platformVelocity.x * Mathf.Clamp01(_jumpPlatformVelocityInherit);
+            currentVelocity.z += platformVelocity.z * Mathf.Clamp01(_jumpPlatformVelocityInherit);
+            _rb.linearVelocity = currentVelocity;
         }
+
+        // 이동 계산 후 접지 상태를 한 번 더 갱신해 연산 순서를 고정합니다.
+        TryGetGroundHit(out _);
 
         // 점프 엣지는 소비
         _jumpDown = false;
@@ -299,6 +351,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         if (!grounded)
         {
+            _landedThisFrame = false;
+
             if (!_wasAirborne)
             {
                 // 발이 지면에서 떨어진 첫 프레임의 y를 기록합니다.
@@ -325,6 +379,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             return;
         }
 
+        _landedThisFrame = _wasAirborne || _fallStateLockedUntilGrounded;
+
         if (_fallStateLockedUntilGrounded)
         {
             if (_lastAnimState == MotionAnimState.Fall)
@@ -339,7 +395,15 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _isFalling = false;
         _wasAirborne = false;
         Vector3 horizontalVelocity = _rb != null ? new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z) : Vector3.zero;
-        bool isRunning = horizontalVelocity.magnitude >= _runSpeedThreshold;
+        
+        bool hasMoveInput = _inputStrength > 0f;
+        float runThreshold = Mathf.Max(_stopThreshold, _runSpeedThreshold);
+        bool isRunning = hasMoveInput || horizontalVelocity.magnitude >= runThreshold;
+
+        // 착지 직후 이동 입력이 유지되고 있으면 즉시 run 전환을 허용합니다.
+        if (_landedThisFrame && hasMoveInput)
+            isRunning = true;
+
         TriggerAnimatorState(isRunning ? MotionAnimState.Running : MotionAnimState.Idle);
     }
 
@@ -376,8 +440,58 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         Vector3 horizontalVelocity = _rb != null
             ? new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z)
             : Vector3.zero;
-        float normalizedSpeed = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.0001f, _moveSpeed));
+        float normalizedSpeed = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.0001f, _maxSpeed));
         _animator.SetFloat(_speedParam, normalizedSpeed);
+    }
+
+    /// <summary>
+    /// 입력 벡터를 방향과 강도로 분리하고 데드존을 적용합니다.
+    /// </summary>
+    private void BuildNormalizedInput(Vector2 moveInput, out Vector3 inputDirection, out float inputStrength)
+    {
+        float magnitude = moveInput.magnitude;
+        if (magnitude < _inputDeadZone)
+        {
+            inputDirection = Vector3.zero;
+            inputStrength = 0f;
+            return;
+        }
+
+        Vector2 normalizedInput = moveInput / Mathf.Max(0.0001f, magnitude);
+        inputDirection = new Vector3(normalizedInput.x, 0f, normalizedInput.y);
+        inputStrength = Mathf.Clamp01(magnitude);
+    }
+
+    /// <summary>
+    /// 접지 상태/방향 전환 여부에 따라 적용할 가속도를 계산합니다.
+    /// </summary>
+    private float GetAccelerationRate(bool grounded, Vector3 currentHorizontalVelocity, Vector3 targetHorizontalVelocity)
+    {
+        if (targetHorizontalVelocity.sqrMagnitude <= 0.000001f)
+            return grounded ? _deceleration : _airAcceleration;
+
+        bool isTurning = currentHorizontalVelocity.sqrMagnitude > 0.000001f
+            && Vector3.Dot(currentHorizontalVelocity.normalized, targetHorizontalVelocity.normalized) < 0f;
+
+        if (!grounded)
+            return _airAcceleration;
+
+        return isTurning ? _turnAcceleration : _acceleration;
+    }
+
+    /// <summary>
+    /// 경사면에서는 접지 노멀을, 나머지는 월드 업 축을 이동 평면 노멀로 사용합니다.
+    /// </summary>
+    private Vector3 GetMovePlaneNormal(bool grounded, RaycastHit hit)
+    {
+        if (!grounded)
+            return Vector3.up;
+
+        float slopeAngle = Vector3.Angle(hit.normal, Vector3.up);
+        if (slopeAngle <= _maxSlopeAngle)
+            return hit.normal;
+
+        return Vector3.up;
     }
 
     /// <summary>

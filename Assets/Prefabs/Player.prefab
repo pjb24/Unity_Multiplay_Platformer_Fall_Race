@@ -337,6 +337,7 @@ MonoBehaviour:
   _input: {fileID: -536203120248885485}
   _cameraTransform: {fileID: 0}
   _sendHz: 30
+  _inputDeadZone: 0.1
 --- !u!114 &-536203120248885485
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -365,8 +366,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMotorServer
   ShowTopMostFoldoutHeaderGroup: 1
-  _moveSpeed: 6
+  _maxSpeed: 10
+  _acceleration: 10
+  _deceleration: 5
+  _turnAcceleration: 5
+  _airAcceleration: 1.5
   _airControl: 0.5
+  _runInputThreshold: 0.65
+  _walkSpeedMultiplier: 0.6
+  _inputDeadZone: 0.1
+  _stopThreshold: 0.05
+  _maxSlopeAngle: 50
+  _rotationSpeedDegPerSec: 540
+  _rotationThreshold: 0.001
   _jumpVelocity: 6.5
   _groundMask:
     serializedVersion: 2
@@ -383,6 +395,7 @@ MonoBehaviour:
   _getupParam: getup
   _jumpParam: jump
   _feelBlendParam: blend feel
+  _speedParam: Speed
   _visualRoot: {fileID: 3317578181517039558}
   _logStopImmediately: 0
 --- !u!114 &6926624359167892058
