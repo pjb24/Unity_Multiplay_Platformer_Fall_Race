@@ -20,6 +20,8 @@ public sealed class PlayerInputSender : NetworkBehaviour
 
     [Header("Send Rate")]
     [SerializeField, Range(10, 60)] private int _sendHz = 30;
+    /// <summary>아날로그 입력의 미세 흔들림을 무시하기 위한 데드존 값입니다.</summary>
+    [SerializeField, Range(0f, 0.5f)] private float _inputDeadZone = 0.1f;
 
     private Vector2 _cachedMoveInput;
     // 점프 Down 이벤트는 큐(래치)로 유지
@@ -28,6 +30,9 @@ public sealed class PlayerInputSender : NetworkBehaviour
     private float _sendAccum;
     private int _tick;
     private bool _subscribed;
+
+    /// <summary>카메라 누락 경고를 1회만 출력하기 위한 플래그입니다.</summary>
+    private bool _cameraMissingLogged;
 
     private void Awake()
     {
@@ -150,6 +155,10 @@ public sealed class PlayerInputSender : NetworkBehaviour
 
     private void OnMove(Vector2 move)
     {
+        // 작은 입력 흔들림을 제거해 회전 드리프트를 방지합니다.
+        if (move.magnitude < _inputDeadZone)
+            move = Vector2.zero;
+
         // 대각선 보정
         if (move.sqrMagnitude > 1f) move.Normalize();
         _cachedMoveInput = move;
@@ -171,7 +180,14 @@ public sealed class PlayerInputSender : NetworkBehaviour
         }
 
         if (_cameraTransform == null)
+        {
+            if (!_cameraMissingLogged)
+            {
+                Debug.LogWarning("[PlayerInputSender] Fallback 발생: Camera transform is null. 입력 축 기준을 월드 축으로 사용합니다.");
+                _cameraMissingLogged = true;
+            }
             return input;
+        }
 
         Vector3 forward = _cameraTransform.forward;
         forward.y = 0f;
