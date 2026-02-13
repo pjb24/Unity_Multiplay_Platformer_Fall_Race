@@ -60,6 +60,11 @@ public sealed class QuickSessionContext : MonoBehaviour
     // Client가 Game씬에서도 Poll을 유지할지(선택: lock/kick 감지)
     [SerializeField] private bool _clientKeepPollingInGame = false;
 
+    /// <summary>
+    /// 현재 로컬 사용자가 최근 세션 진입 시도에서 사용한 이름입니다.
+    /// </summary>
+    public string LocalUsername { get; private set; }
+
     // ============================
     // State
     // ============================
@@ -104,7 +109,8 @@ public sealed class QuickSessionContext : MonoBehaviour
     // ============================
     public async Task<SessionResult> TryJoinAsClientThenEnterGameAsync(string username)
     {
-        var res = await JoinLobbyAsClientAsync(username);
+        LocalUsername = SanitizeLocalUsername(username);
+        var res = await JoinLobbyAsClientAsync(LocalUsername);
         if (!res.ok)
             Debug.LogWarning($"[QuickSession] fallback 발생: TryJoinAsClient failed: {res.failCode} / {res.message}");
         return res;
@@ -112,7 +118,8 @@ public sealed class QuickSessionContext : MonoBehaviour
 
     public async Task<SessionResult> TryStartAsHostThenEnterGameAsync(string username)
     {
-        var res = await CreateLobbyAsHostAsync(username);
+        LocalUsername = SanitizeLocalUsername(username);
+        var res = await CreateLobbyAsHostAsync(LocalUsername);
         if (!res.ok)
             Debug.LogWarning($"[QuickSession] fallback 발생: TryStartAsHost failed: {res.failCode} / {res.message}");
         return res;
@@ -946,6 +953,18 @@ public sealed class QuickSessionContext : MonoBehaviour
 
         Debug.LogWarning($"[LobbyController] Relay endpoint fallback 발생: connectionType '{connectionType}' not found. Using first endpoint.");
         return endpoints[0];
+    }
+
+    /// <summary>
+    /// 표시 이름 입력값을 정리하고 비어 있으면 기본 이름을 생성합니다.
+    /// </summary>
+    private static string SanitizeLocalUsername(string rawName)
+    {
+        string trimmed = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return $"User{UnityEngine.Random.Range(1000, 9999)}";
+
+        return trimmed;
     }
 
     // ============================

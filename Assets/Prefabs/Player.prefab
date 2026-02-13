@@ -41,7 +41,8 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 171952496499078240}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &6526628901222513786
@@ -307,6 +308,8 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 256
   _groundCheckDistance: 1.15
+  _jumpPlatformVelocityInherit: 0.85
+  _defaultKnockbackControlLockSec: 0.2
   _logStopImmediately: 0
 --- !u!114 &6926624359167892058
 MonoBehaviour:
@@ -322,6 +325,25 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::LocalPlayerCameraTarget
   ShowTopMostFoldoutHeaderGroup: 1
   _cameraTarget: {fileID: 0}
+  _nameTagAnchor: {fileID: 171952496499078240}
+  _autoFindHeadBoneAnchor: 1
+  _nameTagHeightRenderer: {fileID: 0}
+  _nameTagOffset: {x: 0, y: 0, z: 0}
+  _fallbackHeightFromRoot: 2.2
+  _nameTagVisibleDistance: 35
+  _hideLocalPlayerNameTag: 0
+  _hideWhenOffScreen: 1
+  _useLineOfSightCheck: 0
+  _lineOfSightMask:
+    serializedVersion: 2
+    m_Bits: 4294967291
+  _fontSize: 3
+  _maxDisplayNameLength: 24
+  _friendlyNameColor: {r: 0, g: 0, b: 0, a: 1}
+  _enemyNameColor: {r: 1, g: 0.45, b: 0.45, a: 1}
+  _outlineColor: {r: 1, g: 1, b: 1, a: 1}
+  _outlineWidth: 0.2
+  _refreshIntervalSec: 0.1
 --- !u!114 &539336039086100174
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -340,3 +362,34 @@ MonoBehaviour:
   _hardBottomY: -200
   _hardBottomCheckInterval: 0.5
   _lockInputDuringRespawn: 1
+--- !u!1 &8367013382171579769
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 171952496499078240}
+  m_Layer: 0
+  m_Name: Head
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &171952496499078240
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8367013382171579769}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1.4, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1433729428330373825}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

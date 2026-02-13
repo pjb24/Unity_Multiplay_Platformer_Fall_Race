@@ -377,7 +377,13 @@ public sealed class RaceHudUIController : MonoBehaviour
         if (_stageProgress == null)
             return;
 
-        string displayName = $"Player {NetworkManager.Singleton?.LocalClientId ?? 0}";
+        // QuickSession에서 입력한 로컬 닉네임을 우선 사용합니다.
+        string preferredName = QuickSessionContext.Instance != null ? QuickSessionContext.Instance.LocalUsername : string.Empty;
+        // 닉네임이 없을 때는 기존 규칙대로 ClientId 기반 기본 이름을 사용합니다.
+        string displayName = string.IsNullOrWhiteSpace(preferredName)
+            ? $"Player {NetworkManager.Singleton?.LocalClientId ?? 0}"
+            : preferredName.Trim();
+
         _stageProgress.SubmitDisplayNameRpc(new Unity.Collections.FixedString64Bytes(displayName));
     }
 
