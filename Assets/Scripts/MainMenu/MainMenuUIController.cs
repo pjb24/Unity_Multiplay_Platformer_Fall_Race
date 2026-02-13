@@ -1,7 +1,6 @@
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public sealed class MainMenuUIController : MonoBehaviour
@@ -18,8 +17,12 @@ public sealed class MainMenuUIController : MonoBehaviour
     // ============================
     // Unity Messages
     // ============================
+    /// <summary>메인 메뉴 UI 이벤트를 연결하고 MainMenu BGM 재생을 보장합니다.</summary>
     private void OnEnable()
     {
+        BgmManager.EnsureExists();
+        BgmManager.Instance.PlayMainMenu();
+
         if (_quickSessionButton == null || _quitButton == null || _statusText == null)
         {
             Debug.LogWarning("[MainMenu] UI fallback 발생: some references are missing.");
@@ -30,6 +33,7 @@ public sealed class MainMenuUIController : MonoBehaviour
         _quitButton.onClick.AddListener(OnClickQuit);
     }
 
+    /// <summary>등록된 UI 버튼 이벤트를 해제합니다.</summary>
     private void OnDisable()
     {
         if (_quickSessionButton != null) _quickSessionButton.onClick.RemoveListener(OnClickQuickSession);
@@ -39,11 +43,13 @@ public sealed class MainMenuUIController : MonoBehaviour
     // ============================
     // UI Callbacks
     // ============================
+    /// <summary>QuickSession 시작 버튼 클릭을 처리합니다.</summary>
     private void OnClickQuickSession()
     {
         _ = RunQuickSessionAsync();
     }
 
+    /// <summary>애플리케이션 종료 버튼 클릭을 처리합니다.</summary>
     private void OnClickQuit()
     {
 #if UNITY_EDITOR
@@ -56,6 +62,7 @@ public sealed class MainMenuUIController : MonoBehaviour
     // ============================
     // Flow
     // ============================
+    /// <summary>QuickSession 참가/생성 흐름을 실행합니다.</summary>
     private async Task RunQuickSessionAsync()
     {
         if (!TryGetContext(out var ctx)) return;
@@ -95,6 +102,7 @@ public sealed class MainMenuUIController : MonoBehaviour
     // ============================
     // Validation / Helpers
     // ============================
+    /// <summary>QuickSessionContext 존재 여부를 검사합니다.</summary>
     private bool TryGetContext(out QuickSessionContext ctx)
     {
         ctx = QuickSessionContext.Instance;
@@ -107,6 +115,7 @@ public sealed class MainMenuUIController : MonoBehaviour
         return true;
     }
 
+    /// <summary>입력값 또는 랜덤 규칙으로 사용자 이름을 결정합니다.</summary>
     private string GetOrGenerateUsername()
     {
         string raw = _usernameInput != null ? _usernameInput.text : null;
@@ -120,12 +129,14 @@ public sealed class MainMenuUIController : MonoBehaviour
         return raw;
     }
 
+    /// <summary>메뉴 버튼의 입력 가능 상태를 일괄 반영합니다.</summary>
     private void SetInteractable(bool on)
     {
         if (_quickSessionButton != null) _quickSessionButton.interactable = on;
         if (_quitButton != null) _quitButton.interactable = on;
     }
 
+    /// <summary>상태 텍스트를 안전하게 갱신합니다.</summary>
     private void SetStatus(string msg)
     {
         if (_statusText != null) _statusText.text = msg;

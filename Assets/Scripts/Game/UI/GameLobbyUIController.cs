@@ -28,10 +28,13 @@ public sealed class GameLobbyUIController : MonoBehaviour
     // ============================
     [Header("Config")]
     [SerializeField] private string _mainMenuSceneName = "MainMenu";
+    // Countdown 단계에서 Running BGM을 미리 재생할지 결정하는 정책 플래그입니다.
+    [SerializeField] private bool _useRunningBgmFromCountdown = false;
 
     // ============================
     // State
     // ============================
+    /// <summary>현재 씬의 GameSessionController 참조입니다.</summary>
     private GameSessionController _session;
 
     private bool _subscribed;          // ReadyList 구독 여부
@@ -46,8 +49,11 @@ public sealed class GameLobbyUIController : MonoBehaviour
     // ============================
     // Unity Messages
     // ============================
+    /// <summary>UI 이벤트/세션 구독을 시작하고 상태 기반 BGM을 동기화합니다.</summary>
     private void OnEnable()
     {
+        BgmManager.EnsureExists();
+
         // 늦게 스폰되는 케이스는 Update에서 재획득/구독
         _session = GameSessionController.Instance;
         if (_session == null)
@@ -69,6 +75,7 @@ public sealed class GameLobbyUIController : MonoBehaviour
         TrySubscribeState();      // State 구독
         TrySubscribeReadyList();
         ForceRefreshUI();
+        ApplyBgmForState(_session != null ? _session.State : E_GameSessionState.Lobby);
 
         var nm = NetworkManager.Singleton;
         if (nm != null)
@@ -199,6 +206,7 @@ public sealed class GameLobbyUIController : MonoBehaviour
         // 기존 전환 처리 재사용
         _lastState = next;
         OnStateChanged(next);
+        ApplyBgmForState(next);
 
         // Lobby 복귀 즉시 UI 복구 + 새로 들어온 Client(Ready=false)까지 바로 반영
         if (next == E_GameSessionState.Lobby)
@@ -276,6 +284,39 @@ public sealed class GameLobbyUIController : MonoBehaviour
 
             SetButtonInteractable(_btnStart, canStart);
         }
+    }
+
+    /// <summary>세션 상태에 맞춰 Lobby/Running BGM을 전환합니다.</summary>
+    private void ApplyBgmForState(E_GameSessionState state)
+    {
+        BgmManager.EnsureExists();
+
+        if (state == E_GameSessionState.Lobby)
+        {
+            BgmManager.Instance.PlayLobby();
+            return;
+        }
+
+        if (state == E_GameSessionState.Countdown)
+        {
+            if (_useRunningBgmFromCountdown)
+            {
+                BgmManager.Instance.PlayRunning();
+            }
+            else
+            {
+                BgmManager.Instance.PlayLobby();
+            }
+            return;
+        }
+
+        if (state == E_GameSessionState.Running)
+        {
+            BgmManager.Instance.PlayRunning();
+            return;
+        }
+
+        BgmManager.Instance.PlayLobby();
     }
 
     // ============================
