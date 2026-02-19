@@ -1,3 +1,4 @@
+using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -104,6 +105,21 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     /// <summary>현재 캐릭터의 Animator 참조입니다.</summary>
     private Animator _animator;
 
+    /// <summary>서버가 확정한 캐릭터 ID를 모든 클라이언트에 동기화하는 단일 상태값입니다.</summary>
+    private readonly NetworkVariable<FixedString64Bytes> _networkCharacterId = new(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    /// <summary>서버가 확정한 fallback 사용 여부를 동기화하는 상태값입니다.</summary>
+    private readonly NetworkVariable<bool> _networkCharacterIsFallback = new(
+        true,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    /// <summary>중복 생성 방지를 위한 마지막 적용 캐릭터 ID 캐시입니다.</summary>
+    private string _lastAppliedCharacterId = string.Empty;
+    /// <summary>중복 생성 방지를 위한 마지막 적용 fallback 캐시입니다.</summary>
+    private bool _lastAppliedFallback = true;
+
     /// <summary>발이 지면에서 떨어진 순간의 y 좌표입니다.</summary>
     private float _liftOffY;
     /// <summary>공중 상태 여부(점프/낙하 판정 기준)입니다.</summary>
@@ -141,6 +157,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        // 캐릭터 동기화 상태 변경을 구독합니다.
+        _networkCharacterId.OnValueChanged += OnNetworkCharacterStateChanged;
+        _networkCharacterIsFallback.OnValueChanged += OnNetworkCharacterFallbackChanged;
+
         // 결과 연출 동기화 값 변화를 구독합니다.
         _resultFeelActive.OnValueChanged += OnResultFeelingChanged;
         _resultFeelBlend.OnValueChanged += OnResultFeelingBlendChanged;
@@ -149,10 +169,15 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         SubscribeCharacterAssignmentEvents();
         // 이미 배정된 캐릭터가 있으면 즉시 비주얼을 구성합니다.
         TryApplyAssignedCharacterVisual();
+
+        Debug.Log($"[CharacterSync] OnNetworkSpawn owner={OwnerClientId}, local={NetworkManager.LocalClientId}, isServer={IsServer}, netCharacterId='{_networkCharacterId.Value}'");
     }
 
     public override void OnNetworkDespawn()
     {
+        _networkCharacterId.OnValueChanged -= OnNetworkCharacterStateChanged;
+        _networkCharacterIsFallback.OnValueChanged -= OnNetworkCharacterFallbackChanged;
+
         _resultFeelActive.OnValueChanged -= OnResultFeelingChanged;
         _resultFeelBlend.OnValueChanged -= OnResultFeelingBlendChanged;
         UnsubscribeCharacterAssignmentEvents();
@@ -251,6 +276,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         // 비주얼이 아직 준비되지 않았다면 계속 재시도합니다.
         if (_activeVisual == null)
             TryApplyAssignedCharacterVisual();
+
+        // 서버 권한 인스턴스는 세션 배정값을 네트워크 상태값에 반영합니다.
+        if (IsServer && _networkCharacterId.Value.Length == 0)
+            TrySyncCharacterStateFromSession_Server();
 
         UpdateMotionAnimation();
     }
@@ -586,6 +615,20 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     /// </summary>
     private void TryApplyAssignedCharacterVisual()
     {
+        if (IsServer)
+            TrySyncCharacterStateFromSession_Server();
+
+        ApplyCharacterVisualFromNetworkState();
+    }
+
+    /// <summary>
+    /// 서버가 GameSession의 배정 결과를 NetworkVariable 단일 상태값으로 반영합니다.
+    /// </summary>
+    private void TrySyncCharacterStateFromSession_Server()
+    {
+        if (!IsServer)
+            return;
+
         GameSessionController session = GameSessionController.Instance;
         if (session == null)
             return;
@@ -593,7 +636,50 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (!session.TryGetAssignedCharacter(OwnerClientId, out string characterId, out bool isFallback))
             return;
 
+        bool changed = _networkCharacterId.Value.ToString() != characterId || _networkCharacterIsFallback.Value != isFallback;
+        _networkCharacterId.Value = new FixedString64Bytes(characterId ?? string.Empty);
+        _networkCharacterIsFallback.Value = isFallback;
+
+        if (changed)
+            Debug.Log($"[CharacterSync] Sync owner={OwnerClientId}, characterId={characterId}, fallback={isFallback}");
+    }
+
+    /// <summary>
+    /// 네트워크 상태값을 읽어 현재 플레이어 비주얼을 적용합니다.
+    /// </summary>
+    private void ApplyCharacterVisualFromNetworkState()
+    {
+        string characterId = _networkCharacterId.Value.ToString();
+        bool isFallback = _networkCharacterIsFallback.Value;
+
+        if (string.IsNullOrEmpty(characterId))
+            return;
+
+        if (_activeVisual != null && characterId == _lastAppliedCharacterId && isFallback == _lastAppliedFallback)
+            return;
+
+        _lastAppliedCharacterId = characterId;
+        _lastAppliedFallback = isFallback;
+        Debug.Log($"[CharacterSync] Apply owner={OwnerClientId}, local={NetworkManager.LocalClientId}, characterId={characterId}, fallback={isFallback}");
         SpawnCharacterVisual(characterId, isFallback);
+    }
+
+    /// <summary>
+    /// 캐릭터 ID 네트워크 상태값이 변경되면 비주얼 적용을 재시도합니다.
+    /// </summary>
+    private void OnNetworkCharacterStateChanged(FixedString64Bytes previous, FixedString64Bytes current)
+    {
+        Debug.Log($"[CharacterSync] CharacterIdChanged owner={OwnerClientId}, local={NetworkManager.LocalClientId}, prev={previous}, next={current}");
+        ApplyCharacterVisualFromNetworkState();
+    }
+
+    /// <summary>
+    /// fallback 네트워크 상태값이 변경되면 비주얼 적용을 재시도합니다.
+    /// </summary>
+    private void OnNetworkCharacterFallbackChanged(bool previous, bool current)
+    {
+        Debug.Log($"[CharacterSync] FallbackChanged owner={OwnerClientId}, local={NetworkManager.LocalClientId}, prev={previous}, next={current}");
+        ApplyCharacterVisualFromNetworkState();
     }
 
     /// <summary>
