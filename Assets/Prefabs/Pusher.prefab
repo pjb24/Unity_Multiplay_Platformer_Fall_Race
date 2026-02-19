@@ -157,7 +157,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   NetworkTransformExpanded: 0
   AutoOwnerAuthorityTickOffset: 1
-  PositionInterpolationType: 0
+  PositionInterpolationType: 1
   RotationInterpolationType: 0
   ScaleInterpolationType: 0
   PositionLerpSmoothing: 1
@@ -254,6 +254,7 @@ MonoBehaviour:
   _pushImpulse: 30
   _pushCooldownPerPlayer: 0.5
   _maxUpwardY: 2
+  _knockbackControlLockSec: 0.2
   _drawGizmos: 1
   _verboseLog: 0
   _onPlayerPushed:

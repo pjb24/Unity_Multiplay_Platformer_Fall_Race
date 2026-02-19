@@ -103,3 +103,5 @@ InitTestScene*.unity*
 
 /[Aa]ssets/ThirdParty/*
 /[Aa]ssets/Resources/ThirdParty/*
+
+/[Aa]ssets/Audio/BGM/*

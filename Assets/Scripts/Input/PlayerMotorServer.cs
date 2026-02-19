@@ -72,7 +72,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private string _runParam = "run";
     [SerializeField] private string _fallParam = "fall";
     [SerializeField] private string _feelParam = "feel";
-    [SerializeField] private string _getupParam = "getup";
     [SerializeField] private string _jumpParam = "jump";
     [SerializeField] private string _feelBlendParam = "blend feel";
 
@@ -135,6 +134,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     private readonly NetworkVariable<bool> _resultFeelActive = new NetworkVariable<bool>(false);
     /// <summary>서버에서 결과 연출 win/lose 블렌드 값을 동기화하는 변수입니다.</summary>
     private readonly NetworkVariable<float> _resultFeelBlend = new NetworkVariable<float>(0f);
+    /// <summary>GameSession 이벤트 구독 완료 여부를 추적하는 플래그입니다.</summary>
+    private bool _characterAssignmentEventsSubscribed;
 
     private void Awake()
     {
@@ -264,10 +265,41 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             return;
 
         _resultFeelActive.Value = false;
+        _resultFeelBlend.Value = 0f;
+
+        // 서버 인스턴스에서 즉시 feel 잔여 트리거를 정리해 다음 상태 전이를 안정화합니다.
+        HandleResultFeelingCleared();
+    }
+
+    /// <summary>
+    /// 리스폰 직후 공중/낙하 판정과 트리거 캐시를 초기화해 정상적인 이동 애니메이션 전환을 보장합니다.
+    /// </summary>
+    public void ResetMotionState_Server()
+    {
+        if (!IsServer)
+            return;
+
+        _wasAirborne = false;
+        _isFalling = false;
+        _fallStateLockedUntilGrounded = false;
+        _landedThisFrame = false;
+        _liftOffY = transform.position.y;
+        _lastAnimState = MotionAnimState.Idle;
+
+        if (_animator == null)
+            return;
+
+        _animator.ResetTrigger(_jumpParam);
+        _animator.ResetTrigger(_fallParam);
+        _animator.ResetTrigger(_feelParam);
+        _animator.SetTrigger(_idleParam);
     }
 
     private void Update()
     {
+        // GameSessionController 지연 생성 상황에서도 이벤트 구독이 성립되도록 매 프레임 확인합니다.
+        EnsureCharacterAssignmentEventSubscription();
+
         // 비주얼이 아직 준비되지 않았다면 계속 재시도합니다.
         if (_activeVisual == null)
             TryApplyAssignedCharacterVisual();
@@ -405,9 +437,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         if (_fallStateLockedUntilGrounded)
         {
-            if (_lastAnimState == MotionAnimState.Fall)
-                _animator.SetTrigger(_getupParam);
-
             _isFalling = false;
             _wasAirborne = false;
             _fallStateLockedUntilGrounded = false;
@@ -536,18 +565,33 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     }
 
     /// <summary>
-    /// GameSession의 캐릭터 배정 이벤트를 구독합니다.
+    /// GameSessionController 생성 타이밍이 늦더라도 캐릭터 배정/상태 이벤트 구독을 보장합니다.
     /// </summary>
-    private void SubscribeCharacterAssignmentEvents()
+    private void EnsureCharacterAssignmentEventSubscription()
     {
+        if (_characterAssignmentEventsSubscribed)
+            return;
+
         GameSessionController session = GameSessionController.Instance;
         if (session == null)
+        {
+            _characterAssignmentEventsSubscribed = false;
             return;
+        }
 
         session.RemoveCharacterAssignmentListener(OnCharacterAssignmentChanged);
         session.AddCharacterAssignmentListener(OnCharacterAssignmentChanged);
         session.RemoveStateListener(OnGameStateChanged);
         session.AddStateListener(OnGameStateChanged);
+        _characterAssignmentEventsSubscribed = true;
+    }
+
+    /// <summary>
+    /// 기존 호출부 호환을 위해 캐릭터 배정 이벤트 구독 보장 함수를 호출합니다.
+    /// </summary>
+    private void SubscribeCharacterAssignmentEvents()
+    {
+        EnsureCharacterAssignmentEventSubscription();
     }
 
     /// <summary>
@@ -555,12 +599,19 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     /// </summary>
     private void UnsubscribeCharacterAssignmentEvents()
     {
+        if (!_characterAssignmentEventsSubscribed)
+            return;
+
         GameSessionController session = GameSessionController.Instance;
         if (session == null)
+        {
+            _characterAssignmentEventsSubscribed = false;
             return;
+        }
 
         session.RemoveCharacterAssignmentListener(OnCharacterAssignmentChanged);
         session.RemoveStateListener(OnGameStateChanged);
+        _characterAssignmentEventsSubscribed = false;
     }
 
     /// <summary>
@@ -571,7 +622,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (!IsServer)
             return;
 
-        if (next == E_GameSessionState.Lobby)
+        if (next == E_GameSessionState.Lobby || next == E_GameSessionState.Countdown || next == E_GameSessionState.Running)
             ClearResultFeeling_Server();
     }
 
@@ -699,10 +750,29 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     /// </summary>
     private void OnResultFeelingChanged(bool previous, bool current)
     {
-        if (!current)
+        if (current)
+        {
+            TriggerAnimatorState(MotionAnimState.Feeling);
+            return;
+        }
+
+        HandleResultFeelingCleared();
+    }
+
+    /// <summary>
+    /// 결과 연출 종료 시 feel 트리거와 상태 캐시를 정리해 다른 이동 애니메이션으로 전이가 가능하도록 만듭니다.
+    /// </summary>
+    private void HandleResultFeelingCleared()
+    {
+        if (_animator == null)
             return;
 
-        TriggerAnimatorState(MotionAnimState.Feeling);
+        _animator.ResetTrigger(_feelParam);
+        _animator.SetFloat(_feelBlendParam, 0f);
+
+        // feel 종료 직후 동일 상태 중복 차단이 남지 않도록 캐시를 초기 상태로 되돌립니다.
+        _lastAnimState = MotionAnimState.Idle;
+        _animator.SetTrigger(_idleParam);
     }
 
     /// <summary>

@@ -229,8 +229,8 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   NetworkTransformExpanded: 0
   AutoOwnerAuthorityTickOffset: 1
-  PositionInterpolationType: 0
-  RotationInterpolationType: 0
+  PositionInterpolationType: 1
+  RotationInterpolationType: 1
   ScaleInterpolationType: 0
   PositionLerpSmoothing: 1
   PositionMaxInterpolationTime: 0.1
@@ -370,7 +370,7 @@ MonoBehaviour:
   _acceleration: 10
   _deceleration: 5
   _turnAcceleration: 5
-  _airAcceleration: 1.5
+  _airAcceleration: 7
   _airControl: 0.5
   _runInputThreshold: 0.65
   _walkSpeedMultiplier: 0.6
@@ -395,7 +395,6 @@ MonoBehaviour:
   _getupParam: getup
   _jumpParam: jump
   _feelBlendParam: blend feel
-  _speedParam: Speed
   _visualRoot: {fileID: 3317578181517039558}
   _logStopImmediately: 0
 --- !u!114 &6926624359167892058

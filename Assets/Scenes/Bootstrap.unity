@@ -213,6 +213,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dabc64f03c442024cb08630b85495522, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BgmManager
+  _mainMenuClip: {fileID: 8300000, guid: b9fc56de5879cb54e83c61bd7111f730, type: 3}
+  _lobbyClip: {fileID: 8300000, guid: 2bbb3472c2af03e4984ce4c6a536dae6, type: 3}
+  _runningClip: {fileID: 8300000, guid: 0997e55332201fd41b11647ff899679c, type: 3}
+  _defaultVolume: 0.6
+  _masterVolumeMultiplier: 1
+  _fadeDurationSeconds: 0.2
 --- !u!1 &1311760252
 GameObject:
   m_ObjectHideFlags: 0

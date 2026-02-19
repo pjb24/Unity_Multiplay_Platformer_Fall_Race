@@ -179,6 +179,7 @@ public sealed class PlayerRespawnServer : NetworkBehaviour
         if (motor != null)
         {
             motor.StopImmediately_Server($"respawn:{reason}");
+            //motor.ResetMotionState_Server();
         }
         else
         {
