@@ -102,7 +102,7 @@ InitTestScene*.unity*
 /[Aa]ssets/TextMesh Pro.meta
 
 /[Aa]ssets/ThirdParty/*
-/[Aa]ssets/Resources/ThirdParty/*
+/[Aa]ssets/Resources/ThirdParty/Characters/*
 
-/[Aa]ssets/Audio/BGM/*
-/[Aa]ssets/Audio/SFX/*
+/[Aa]ssets/Audio/BGM/*.ogg
+/[Aa]ssets/Audio/SFX/Player/*.wav

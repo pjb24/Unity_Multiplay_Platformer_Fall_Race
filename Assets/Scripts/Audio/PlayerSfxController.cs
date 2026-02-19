@@ -53,8 +53,8 @@ public sealed class PlayerSfxController : MonoBehaviour
     private float _horizontalSpeed;
     /// <summary>다음 발소리 재생까지 남은 시간 캐시입니다.</summary>
     private float _footstepCooldown;
-    /// <summary>카메라 AudioSource 자동 할당을 이미 시도했는지 추적하는 플래그입니다.</summary>
-    private bool _cameraSourceResolveAttempted;
+    /// <summary>점프 재생 중복 방지를 위해 남은 점프 재생 잠금 시간(초)입니다.</summary>
+    private float _jumpPlaybackLockTimer;
 
     /// <summary>
     /// 초기 참조를 캐싱하고 AudioSource 기본값을 보정합니다.
@@ -69,8 +69,8 @@ public sealed class PlayerSfxController : MonoBehaviour
         if (_jumpSource == null)
             _jumpSource = _footstepSource;
 
-        // 로컬 카메라 AudioSource 자동 연결을 즉시 1회 시도합니다.
-        TryAssignCameraAudioSource();
+        // 점프 사운드가 발소리 재생 상태에 영향을 받지 않도록 점프 전용 소스를 보장합니다.
+        EnsureDedicatedJumpSource();
 
         if (_footstepSource != null)
             _footstepSource.playOnAwake = false;
@@ -84,18 +84,24 @@ public sealed class PlayerSfxController : MonoBehaviour
     /// </summary>
     private void Update()
     {
-        // Awake 시점에 Camera.main이 아직 준비되지 않은 경우를 대비해 재시도합니다.
-        if (_footstepSource == null || _jumpSource == null)
-            TryAssignCameraAudioSource();
+        // 런타임 재할당 상황에서도 점프 전용 소스를 유지합니다.
+        EnsureDedicatedJumpSource();
 
         if (!CanPlaySfx())
             return;
 
+        if (_jumpPlaybackLockTimer > 0f)
+            _jumpPlaybackLockTimer = Mathf.Max(0f, _jumpPlaybackLockTimer - Time.deltaTime);
+
         if (!ShouldPlayFootstep())
         {
             _footstepCooldown = 0f;
+            StopFootstepIfPlaying();
             return;
         }
+
+        if (_footstepSource != null && _footstepSource.isPlaying)
+            return;
 
         _footstepCooldown -= Time.deltaTime;
         if (_footstepCooldown > 0f)
@@ -105,30 +111,30 @@ public sealed class PlayerSfxController : MonoBehaviour
         _footstepCooldown = _footstepInterval;
     }
 
-
     /// <summary>
-    /// 카메라에 있는 AudioSource를 자동 탐색하여 발소리/점프 소스에 할당합니다.
+    /// 점프 사운드가 발소리 상태에 의해 차단되지 않도록 점프 전용 AudioSource를 보장합니다.
     /// </summary>
-    private void TryAssignCameraAudioSource()
+    private void EnsureDedicatedJumpSource()
     {
-        if (_cameraSourceResolveAttempted && _footstepSource != null && _jumpSource != null)
+        if (_jumpSource == null || _footstepSource == null)
             return;
 
-        _cameraSourceResolveAttempted = true;
-
-        Camera mainCamera = Camera.main;
-        if (mainCamera == null)
+        if (_jumpSource != _footstepSource)
             return;
 
-        AudioSource cameraAudioSource = mainCamera.GetComponent<AudioSource>();
-        if (cameraAudioSource == null)
-            return;
+        AudioSource dedicatedJumpSource = gameObject.AddComponent<AudioSource>();
+        dedicatedJumpSource.playOnAwake = false;
+        dedicatedJumpSource.outputAudioMixerGroup = _footstepSource.outputAudioMixerGroup;
+        dedicatedJumpSource.spatialBlend = _footstepSource.spatialBlend;
+        dedicatedJumpSource.rolloffMode = _footstepSource.rolloffMode;
+        dedicatedJumpSource.minDistance = _footstepSource.minDistance;
+        dedicatedJumpSource.maxDistance = _footstepSource.maxDistance;
+        dedicatedJumpSource.dopplerLevel = _footstepSource.dopplerLevel;
 
-        if (_footstepSource == null)
-            _footstepSource = cameraAudioSource;
+        _jumpSource = dedicatedJumpSource;
 
-        if (_jumpSource == null)
-            _jumpSource = cameraAudioSource;
+        if (_debugSfxLog)
+            Debug.Log("[PlayerSfxController] Jump 전용 AudioSource를 자동 생성했습니다.");
     }
 
     /// <summary>
@@ -156,8 +162,12 @@ public sealed class PlayerSfxController : MonoBehaviour
             return;
         }
 
+        if (_jumpPlaybackLockTimer > 0f)
+            return;
+
         _jumpSource.pitch = Random.Range(_pitchMin, _pitchMax);
         _jumpSource.PlayOneShot(_jumpClip, _jumpVolume);
+        _jumpPlaybackLockTimer = _jumpClip.length;
     }
 
     /// <summary>
@@ -191,7 +201,43 @@ public sealed class PlayerSfxController : MonoBehaviour
             return;
 
         _footstepSource.pitch = Random.Range(_pitchMin, _pitchMax);
-        _footstepSource.PlayOneShot(clip, _footstepVolume);
+        _footstepSource.volume = _footstepVolume;
+        _footstepSource.clip = clip;
+        _footstepSource.Play();
+    }
+
+    /// <summary>
+    /// 이동이 멈췄을 때 재생 중인 발소리를 즉시 중지합니다.
+    /// </summary>
+    private void StopFootstepIfPlaying()
+    {
+        if (_footstepSource == null)
+            return;
+
+        if (!_footstepSource.isPlaying)
+            return;
+
+        if (!IsCurrentFootstepClip(_footstepSource.clip))
+            return;
+
+        _footstepSource.Stop();
+    }
+
+    /// <summary>
+    /// 현재 AudioSource 클립이 발소리 목록에 포함되는지 판정합니다.
+    /// </summary>
+    private bool IsCurrentFootstepClip(AudioClip currentClip)
+    {
+        if (currentClip == null || _footstepClips == null)
+            return false;
+
+        for (int i = 0; i < _footstepClips.Length; i++)
+        {
+            if (_footstepClips[i] == currentClip)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
