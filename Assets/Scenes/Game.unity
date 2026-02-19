@@ -914,7 +914,7 @@ Transform:
   m_GameObject: {fileID: 66442705}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 9, z: 0}
+  m_LocalPosition: {x: 0, y: 12, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2306,6 +2306,14 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   _countdownSeconds: 3
   _resultSeconds: 5
+  _defaultCharacterIds:
+  - Character_A
+  - Character_B
+  - Character_C
+  - Character_D
+  - Character_E
+  - Character_F
+  _fallbackCharacterId: capsule_fallback
 --- !u!114 &196107777
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3072,7 +3080,7 @@ Transform:
   m_GameObject: {fileID: 304373992}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 7, z: 0}
+  m_LocalPosition: {x: 0, y: 9, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6632,7 +6640,7 @@ Transform:
   m_GameObject: {fileID: 648741937}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 15, z: 8}
+  m_LocalPosition: {x: 0, y: 12, z: 8}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -6868,7 +6876,7 @@ Transform:
   m_GameObject: {fileID: 675803127}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 4, z: 0}
+  m_LocalPosition: {x: 0, y: 6, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -10180,7 +10188,7 @@ GameObject:
   - component: {fileID: 1120973743}
   - component: {fileID: 1120973742}
   - component: {fileID: 1120973741}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CurvedStair
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -11473,6 +11481,7 @@ MonoBehaviour:
   _btnStart: {fileID: 2060476502}
   _btnLeave: {fileID: 1117386878}
   _mainMenuSceneName: MainMenu
+  _useRunningBgmFromCountdown: 0
 --- !u!1001 &1243951878
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -11560,7 +11569,7 @@ Transform:
   m_GameObject: {fileID: 1264288708}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 4, z: 0}
+  m_LocalPosition: {x: 0, y: 6, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -13249,7 +13258,7 @@ GameObject:
   - component: {fileID: 1469657914}
   - component: {fileID: 1469657913}
   - component: {fileID: 1469657912}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: Stairs
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -17003,7 +17012,7 @@ Transform:
   m_GameObject: {fileID: 1660016028}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 9, z: 0}
+  m_LocalPosition: {x: 0, y: 11, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -17514,7 +17523,7 @@ GameObject:
   - component: {fileID: 1694807311}
   - component: {fileID: 1694807310}
   - component: {fileID: 1694807309}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CurvedStair (3)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -21455,7 +21464,7 @@ Transform:
   m_GameObject: {fileID: 2083077669}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 5, y: 9, z: 8}
+  m_LocalPosition: {x: 5, y: 7, z: 8}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -21556,7 +21565,7 @@ GameObject:
   - component: {fileID: 2098414532}
   - component: {fileID: 2098414531}
   - component: {fileID: 2098414530}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CurvedStair (1)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -22021,7 +22030,7 @@ GameObject:
   - component: {fileID: 2139047823}
   - component: {fileID: 2139047822}
   - component: {fileID: 2139047821}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CurvedStair (2)
   m_TagString: Untagged
   m_Icon: {fileID: 0}

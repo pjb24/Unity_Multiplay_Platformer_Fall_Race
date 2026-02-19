@@ -51,12 +51,26 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private float _rotationThreshold = 0.001f;
 
     [Header("Jump")]
+    /// <summary>점프 시 설정할 수직 속도입니다.</summary>
     [SerializeField] private float _jumpVelocity = 6.5f;
+    /// <summary>Ground 판정 대상 레이어 마스크입니다(플랫폼 포함 필수).</summary>
     [SerializeField] private LayerMask _groundMask;
+    /// <summary>하향 Raycast 기본 길이입니다.</summary>
     [SerializeField] private float _groundCheckDistance = 1.15f;
+    /// <summary>하강 속도에 비례해 Ground 체크 길이에 더할 추가 거리 계수입니다.</summary>
+    [SerializeField] private float _groundCheckFallDistancePerSpeed = 0.12f;
+
+    [Header("Head Check")]
+    /// <summary>상단 충돌(천장 압착) 감지용 레이어 마스크입니다.</summary>
+    [SerializeField] private LayerMask _headCheckMask;
+    /// <summary>상향 Raycast 길이입니다.</summary>
+    [SerializeField] private float _headCheckDistance = 1.05f;
 
     [Header("Moving Platform")]
+    /// <summary>점프 순간 플랫폼 수평 속도 상속 비율입니다.</summary>
     [SerializeField] private float _jumpPlatformVelocityInherit = 0.85f;
+    /// <summary>플랫폼 상승 중 점프 시 플랫폼 y속도 상속 비율입니다.</summary>
+    [SerializeField] private float _jumpPlatformUpwardVelocityInherit = 1f;
 
     [Header("Knockback")]
     [SerializeField] private float _defaultKnockbackControlLockSec = 0.2f;
@@ -96,6 +110,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     private int _tick;
     /// <summary>넉백 후 입력 잠금 해제 시각입니다.</summary>
     private float _knockbackControlLockUntil;
+    /// <summary>현재 접지 중인 플랫폼 참조(서버 판정)입니다.</summary>
+    private MovingPlatformController _currentPlatform;
 
     /// <summary>현재 표시 중인 캐릭터 비주얼 인스턴스입니다.</summary>
     private GameObject _activeVisual;
@@ -141,6 +157,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     {
         // 플레이어 이동 제어에 사용하는 Rigidbody를 캐싱합니다.
         _rb = GetComponent<Rigidbody>();
+        // 고속 플랫폼 접촉 시 관통/미검출을 줄이기 위해 연속 충돌을 사용합니다.
+        _rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        // 원격 동기화 시 시각적 떨림 완화를 위해 보간을 사용합니다.
+        _rb.interpolation = RigidbodyInterpolation.Interpolate;
         // 비주얼 부모가 지정되지 않으면 자기 자신을 사용합니다.
         if (_visualRoot == null)
             _visualRoot = transform;
@@ -325,12 +345,16 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         // 이동 계산 전 접지/충돌 상태를 먼저 갱신합니다.
         bool grounded = TryGetGroundHit(out RaycastHit hit);
+        // 점프 순간 수평 속도 상속에 사용할 플랫폼 속도입니다.
         Vector3 platformVelocity = Vector3.zero;
-        if (grounded)
+        if (grounded && TryResolveGroundedPlatform(hit, out MovingPlatformController platform))
         {
-            MovingPlatformController platform = hit.collider != null ? hit.collider.GetComponentInParent<MovingPlatformController>() : null;
-            if (platform != null)
-                platformVelocity = platform.CurrentVelocity;
+            _currentPlatform = platform;
+            platformVelocity = platform.CurrentVelocity;
+        }
+        else
+        {
+            _currentPlatform = null;
         }
 
         // 이동
@@ -338,27 +362,39 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         float maxStateSpeed = _maxSpeed * stateSpeedMultiplier;
         float controlRatio = grounded ? 1f : Mathf.Clamp01(_airControl);
 
+        // 플랫폼 기준 상대 이동을 만들기 위한 수평 플랫폼 속도입니다.
+        Vector3 platformHorizontalVelocity = new Vector3(platformVelocity.x, 0f, platformVelocity.z);
         Vector3 movePlaneNormal = GetMovePlaneNormal(grounded, hit);
-        Vector3 targetHorizontalVelocity = Vector3.ProjectOnPlane(_inputDirection * (_inputStrength * maxStateSpeed), movePlaneNormal);
-        targetHorizontalVelocity *= controlRatio;
-        if (grounded)
-            targetHorizontalVelocity += new Vector3(platformVelocity.x, 0f, platformVelocity.z);
+        // 입력으로 만들어지는 목표 상대 수평 속도입니다.
+        Vector3 targetRelativeHorizontalVelocity = Vector3.ProjectOnPlane(_inputDirection * (_inputStrength * maxStateSpeed), movePlaneNormal);
+        targetRelativeHorizontalVelocity *= controlRatio;
 
         Vector3 currentVelocity = _rb.linearVelocity;
+        // 현재 월드 수평 속도입니다.
         Vector3 currentHorizontalVelocity = new Vector3(currentVelocity.x, 0f, currentVelocity.z);
-        float accelerationRate = GetAccelerationRate(grounded, currentHorizontalVelocity, targetHorizontalVelocity);
-        Vector3 nextHorizontalVelocity = Vector3.MoveTowards(
-            currentHorizontalVelocity,
-            targetHorizontalVelocity,
+        // 현재 플랫폼 기준 상대 수평 속도입니다.
+        Vector3 currentRelativeHorizontalVelocity = grounded ? currentHorizontalVelocity - platformHorizontalVelocity : currentHorizontalVelocity;
+        float accelerationRate = GetAccelerationRate(grounded, currentRelativeHorizontalVelocity, targetRelativeHorizontalVelocity);
+        // 플랫폼 기준 상대 수평 속도를 입력 목표값으로 수렴시킵니다.
+        Vector3 nextRelativeHorizontalVelocity = Vector3.MoveTowards(
+            currentRelativeHorizontalVelocity,
+            targetRelativeHorizontalVelocity,
             accelerationRate * Time.fixedDeltaTime);
 
-        float maxHorizontalMagnitude = (grounded ? maxStateSpeed : maxStateSpeed * controlRatio) + new Vector3(platformVelocity.x, 0f, platformVelocity.z).magnitude;
-        nextHorizontalVelocity = Vector3.ClampMagnitude(nextHorizontalVelocity, maxHorizontalMagnitude);
-        if (_inputStrength <= 0f && nextHorizontalVelocity.magnitude <= _stopThreshold)
-            nextHorizontalVelocity = Vector3.zero;
+        float maxHorizontalMagnitude = grounded ? maxStateSpeed : maxStateSpeed * controlRatio;
+        nextRelativeHorizontalVelocity = Vector3.ClampMagnitude(nextRelativeHorizontalVelocity, maxHorizontalMagnitude);
+        Vector3 nextHorizontalVelocity = grounded
+            ? nextRelativeHorizontalVelocity + platformHorizontalVelocity
+            : nextRelativeHorizontalVelocity;
+        if (_inputStrength <= 0f && nextRelativeHorizontalVelocity.magnitude <= _stopThreshold)
+        {
+            nextRelativeHorizontalVelocity = Vector3.zero;
+            nextHorizontalVelocity = grounded ? platformHorizontalVelocity : Vector3.zero;
+        }
 
-        // 현재 수평 속도 방향 기준으로 캐릭터 회전을 갱신합니다.
-        RotateCharacter_Server(nextHorizontalVelocity);
+        // 플랫폼 이동 영향이 아닌 플레이어 상대 이동 기준으로 캐릭터 회전을 갱신합니다.
+        Vector3 rotationVelocity = grounded ? nextRelativeHorizontalVelocity : nextHorizontalVelocity;
+        RotateCharacter_Server(rotationVelocity);
 
         bool lockedByKnockback = Time.time < _knockbackControlLockUntil;
         if (!lockedByKnockback)
@@ -373,10 +409,25 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (_jumpDown && grounded)
         {
             currentVelocity = _rb.linearVelocity;
+            // 점프 순간 y속도를 명시적으로 재설정해 중복 가속 상속을 방지합니다.
             currentVelocity.y = _jumpVelocity;
+            // 상승 중인 플랫폼 위 점프는 플랫폼의 상향 속도를 추가해 체감 점프 높이를 유지합니다.
+            float inheritedUpwardVelocity = Mathf.Max(0f, platformVelocity.y) * Mathf.Clamp01(_jumpPlatformUpwardVelocityInherit);
+            currentVelocity.y += inheritedUpwardVelocity;
             currentVelocity.x += platformVelocity.x * Mathf.Clamp01(_jumpPlatformVelocityInherit);
             currentVelocity.z += platformVelocity.z * Mathf.Clamp01(_jumpPlatformVelocityInherit);
             _rb.linearVelocity = currentVelocity;
+            _currentPlatform = null;
+        }
+
+        if (HasCeilingAbove())
+        {
+            currentVelocity = _rb.linearVelocity;
+            if (currentVelocity.y > 0f)
+            {
+                currentVelocity.y = 0f;
+                _rb.linearVelocity = currentVelocity;
+            }
         }
 
         // 이동 계산 후 접지 상태를 한 번 더 갱신해 연산 순서를 고정합니다.
@@ -821,6 +872,64 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     {
         // 캡슐/콜라이더 구조에 따라 조정
         Vector3 origin = transform.position + Vector3.up * 0.1f;
-        return Physics.Raycast(origin, Vector3.down, out hit, _groundCheckDistance, _groundMask, QueryTriggerInteraction.Ignore);
+        float downwardSpeed = Mathf.Max(0f, -_rb.linearVelocity.y);
+        float dynamicDistance = _groundCheckDistance + (downwardSpeed * _groundCheckFallDistancePerSpeed);
+        bool hitGround = Physics.Raycast(origin, Vector3.down, out hit, dynamicDistance, _groundMask, QueryTriggerInteraction.Ignore);
+        if (!hitGround)
+            return false;
+
+        // 상승 플랫폼 탑승 상태는 예외적으로 접지를 유지합니다.
+        if (TryResolveGroundedPlatform(hit, out _))
+            return true;
+
+        // 상승 중 오검출을 줄이기 위해 하강 또는 정지 상태에서만 접지로 판정합니다.
+        return _rb.linearVelocity.y <= 0f;
+    }
+
+    /// <summary>
+    /// 서버가 관리하는 접촉 목록과 Ground 히트를 함께 확인해 현재 탑승 플랫폼을 결정합니다.
+    /// </summary>
+    private bool TryResolveGroundedPlatform(RaycastHit hit, out MovingPlatformController platform)
+    {
+        platform = hit.collider != null ? hit.collider.GetComponentInParent<MovingPlatformController>() : null;
+        if (platform == null)
+            return false;
+
+        return platform.IsPlayerInContact(this);
+    }
+
+    /// <summary>
+    /// 상단 충돌 감지로 천장 압착 상황에서 상승 속도를 차단합니다.
+    /// </summary>
+    private bool HasCeilingAbove()
+    {
+        Vector3 origin = transform.position + Vector3.up * 0.1f;
+        return Physics.Raycast(origin, Vector3.up, _headCheckDistance, _headCheckMask, QueryTriggerInteraction.Ignore);
+    }
+
+    /// <summary>
+    /// 플랫폼 접촉 시작 시 서버가 현재 플랫폼 후보를 캐시합니다.
+    /// </summary>
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (!IsServer)
+            return;
+
+        MovingPlatformController platform = collision.collider.GetComponentInParent<MovingPlatformController>();
+        if (platform != null)
+            _currentPlatform = platform;
+    }
+
+    /// <summary>
+    /// 플랫폼 접촉 종료 시 서버가 플랫폼 캐시를 즉시 해제합니다.
+    /// </summary>
+    private void OnCollisionExit(Collision collision)
+    {
+        if (!IsServer)
+            return;
+
+        MovingPlatformController platform = collision.collider.GetComponentInParent<MovingPlatformController>();
+        if (platform != null && platform == _currentPlatform)
+            _currentPlatform = null;
     }
 }
