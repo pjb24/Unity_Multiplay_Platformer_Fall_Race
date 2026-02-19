@@ -75,8 +75,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private string _getupParam = "getup";
     [SerializeField] private string _jumpParam = "jump";
     [SerializeField] private string _feelBlendParam = "blend feel";
-    /// <summary>이동 속도(0~1)를 전달할 Animator float 파라미터 이름입니다.</summary>
-    [SerializeField] private string _speedParam = "Speed";
 
     [Header("Visual")]
     [SerializeField] private Transform _visualRoot;
@@ -137,9 +135,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     private readonly NetworkVariable<bool> _resultFeelActive = new NetworkVariable<bool>(false);
     /// <summary>서버에서 결과 연출 win/lose 블렌드 값을 동기화하는 변수입니다.</summary>
     private readonly NetworkVariable<float> _resultFeelBlend = new NetworkVariable<float>(0f);
-
-    /// <summary>Animator Speed 파라미터가 비어있는지 확인하는 플래그입니다.</summary>
-    private bool _hasSpeedParam;
 
     private void Awake()
     {
@@ -367,8 +362,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (_animator == null)
             return;
 
-        UpdateAnimatorSpeedValue();
-
         if (_resultFeelActive.Value)
         {
             TriggerAnimatorState(MotionAnimState.Feeling);
@@ -427,7 +420,8 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         
         bool hasMoveInput = _inputStrength > 0f;
         float runThreshold = Mathf.Max(_stopThreshold, _runSpeedThreshold);
-        bool isRunning = hasMoveInput || horizontalVelocity.magnitude >= runThreshold;
+        // 실제 이동 속도 기준으로만 run 상태를 판정해 방향 전환 시 run 재트리거가 가능하도록 합니다.
+        bool isRunning = horizontalVelocity.magnitude >= runThreshold;
 
         // 착지 직후 이동 입력이 유지되고 있으면 즉시 run 전환을 허용합니다.
         if (_landedThisFrame && hasMoveInput)
@@ -456,21 +450,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             _rotationSpeedDegPerSec * Time.fixedDeltaTime);
 
         _rb.MoveRotation(nextRotation);
-    }
-
-    /// <summary>
-    /// 실제 수평 이동 속도를 Animator Speed 파라미터로 동기화합니다.
-    /// </summary>
-    private void UpdateAnimatorSpeedValue()
-    {
-        if (!_hasSpeedParam)
-            return;
-
-        Vector3 horizontalVelocity = _rb != null
-            ? new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z)
-            : Vector3.zero;
-        float normalizedSpeed = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.0001f, _maxSpeed));
-        _animator.SetFloat(_speedParam, normalizedSpeed);
     }
 
     /// <summary>
@@ -705,7 +684,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _activeVisual.transform.localRotation = Quaternion.identity;
 
         _animator = _activeVisual.GetComponentInChildren<Animator>();
-        _hasSpeedParam = _animator != null && !string.IsNullOrWhiteSpace(_speedParam);
         if (_animator == null && prefab != null)
         {
             Destroy(_activeVisual);
@@ -714,9 +692,6 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             _activeVisual.transform.localPosition = Vector3.zero;
             _activeVisual.transform.localRotation = Quaternion.identity;
         }
-
-        if (_animator == null)
-            _hasSpeedParam = false;
     }
 
     /// <summary>
