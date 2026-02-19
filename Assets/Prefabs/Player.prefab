@@ -141,6 +141,7 @@ GameObject:
   - component: {fileID: 6264327263649260171}
   - component: {fileID: 6926624359167892058}
   - component: {fileID: 539336039086100174}
+  - component: {fileID: 2565881198456973646}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -384,7 +385,13 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 256
   _groundCheckDistance: 1.65
+  _groundCheckFallDistancePerSpeed: 0.12
+  _headCheckMask:
+    serializedVersion: 2
+    m_Bits: 0
+  _headCheckDistance: 1.05
   _jumpPlatformVelocityInherit: 0.85
+  _jumpPlatformUpwardVelocityInherit: 1
   _defaultKnockbackControlLockSec: 0.2
   _runSpeedThreshold: 0.15
   _fallDistanceFromLiftOffThreshold: 2
@@ -392,10 +399,10 @@ MonoBehaviour:
   _runParam: run
   _fallParam: fall
   _feelParam: feel
-  _getupParam: getup
   _jumpParam: jump
   _feelBlendParam: blend feel
   _visualRoot: {fileID: 3317578181517039558}
+  _playerSfxController: {fileID: 2565881198456973646}
   _logStopImmediately: 0
 --- !u!114 &6926624359167892058
 MonoBehaviour:
@@ -448,6 +455,32 @@ MonoBehaviour:
   _hardBottomY: -200
   _hardBottomCheckInterval: 0.5
   _lockInputDuringRespawn: 1
+--- !u!114 &2565881198456973646
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6269677449239708691}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 56c478a79986a914fb9b672fc8f4533b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSfxController
+  _footstepSource: {fileID: 0}
+  _jumpSource: {fileID: 0}
+  _footstepClips:
+  - {fileID: 8300000, guid: 00b12c104c5ca1041a3b5089680049d7, type: 3}
+  _jumpClip: {fileID: 8300000, guid: 7c06a3185b30e354c9fc145b79903497, type: 3}
+  _footstepInterval: 0.32
+  _minMoveSpeedForFootstep: 0.15
+  _groundedRequiredForFootstep: 1
+  _footstepVolume: 0.75
+  _jumpVolume: 0.9
+  _pitchMin: 0.96
+  _pitchMax: 1.04
+  _playOnlyForLocalOwner: 1
+  _debugSfxLog: 0
 --- !u!1 &8367013382171579769
 GameObject:
   m_ObjectHideFlags: 0

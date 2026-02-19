@@ -1,0 +1,210 @@
+using Unity.Netcode;
+using UnityEngine;
+
+/// <summary>
+/// 플레이어 이동/점프 효과음을 재생하는 전용 컨트롤러입니다.
+/// </summary>
+[DisallowMultipleComponent]
+public sealed class PlayerSfxController : MonoBehaviour
+{
+    [Header("Audio Source")]
+    /// <summary>발소리 재생에 사용하는 AudioSource 참조입니다.</summary>
+    [SerializeField] private AudioSource _footstepSource;
+    /// <summary>점프 사운드 재생에 사용하는 AudioSource 참조입니다.</summary>
+    [SerializeField] private AudioSource _jumpSource;
+
+    [Header("Clips")]
+    /// <summary>이동 시 순환 재생할 발소리 클립 목록입니다.</summary>
+    [SerializeField] private AudioClip[] _footstepClips;
+    /// <summary>점프 성공 시 1회 재생할 점프 클립입니다.</summary>
+    [SerializeField] private AudioClip _jumpClip;
+
+    [Header("Footstep")]
+    /// <summary>발소리 기본 재생 간격(초)입니다.</summary>
+    [SerializeField, Min(0.01f)] private float _footstepInterval = 0.32f;
+    /// <summary>발소리 재생을 시작할 최소 수평 속도입니다.</summary>
+    [SerializeField, Min(0f)] private float _minMoveSpeedForFootstep = 0.15f;
+    /// <summary>발소리를 접지 상태에서만 재생할지 여부입니다.</summary>
+    [SerializeField] private bool _groundedRequiredForFootstep = true;
+
+    [Header("Volume & Pitch")]
+    /// <summary>발소리 볼륨 크기입니다.</summary>
+    [SerializeField, Range(0f, 1f)] private float _footstepVolume = 0.75f;
+    /// <summary>점프 사운드 볼륨 크기입니다.</summary>
+    [SerializeField, Range(0f, 1f)] private float _jumpVolume = 0.9f;
+    /// <summary>반복감 완화를 위한 피치 랜덤 최소값입니다.</summary>
+    [SerializeField, Range(0.5f, 2f)] private float _pitchMin = 0.96f;
+    /// <summary>반복감 완화를 위한 피치 랜덤 최대값입니다.</summary>
+    [SerializeField, Range(0.5f, 2f)] private float _pitchMax = 1.04f;
+
+    [Header("Policy")]
+    /// <summary>로컬 오너 플레이어에게만 SFX를 재생할지 여부입니다.</summary>
+    [SerializeField] private bool _playOnlyForLocalOwner = true;
+    /// <summary>디버그 로그를 출력할지 여부입니다.</summary>
+    [SerializeField] private bool _debugSfxLog = false;
+
+    /// <summary>오너 판별에 사용하는 NetworkObject 참조입니다.</summary>
+    private NetworkObject _networkObject;
+    /// <summary>최신 접지 상태 캐시입니다.</summary>
+    private bool _isGrounded;
+    /// <summary>최신 이동 입력 여부 캐시입니다.</summary>
+    private bool _hasMoveInput;
+    /// <summary>최신 수평 속도 캐시입니다.</summary>
+    private float _horizontalSpeed;
+    /// <summary>다음 발소리 재생까지 남은 시간 캐시입니다.</summary>
+    private float _footstepCooldown;
+    /// <summary>카메라 AudioSource 자동 할당을 이미 시도했는지 추적하는 플래그입니다.</summary>
+    private bool _cameraSourceResolveAttempted;
+
+    /// <summary>
+    /// 초기 참조를 캐싱하고 AudioSource 기본값을 보정합니다.
+    /// </summary>
+    private void Awake()
+    {
+        _networkObject = GetComponent<NetworkObject>();
+
+        if (_footstepSource == null)
+            _footstepSource = GetComponent<AudioSource>();
+
+        if (_jumpSource == null)
+            _jumpSource = _footstepSource;
+
+        // 로컬 카메라 AudioSource 자동 연결을 즉시 1회 시도합니다.
+        TryAssignCameraAudioSource();
+
+        if (_footstepSource != null)
+            _footstepSource.playOnAwake = false;
+
+        if (_jumpSource != null)
+            _jumpSource.playOnAwake = false;
+    }
+
+    /// <summary>
+    /// 매 프레임 발소리 타이머를 갱신하고 조건이 충족되면 발소리를 재생합니다.
+    /// </summary>
+    private void Update()
+    {
+        // Awake 시점에 Camera.main이 아직 준비되지 않은 경우를 대비해 재시도합니다.
+        if (_footstepSource == null || _jumpSource == null)
+            TryAssignCameraAudioSource();
+
+        if (!CanPlaySfx())
+            return;
+
+        if (!ShouldPlayFootstep())
+        {
+            _footstepCooldown = 0f;
+            return;
+        }
+
+        _footstepCooldown -= Time.deltaTime;
+        if (_footstepCooldown > 0f)
+            return;
+
+        PlayFootstepInternal();
+        _footstepCooldown = _footstepInterval;
+    }
+
+
+    /// <summary>
+    /// 카메라에 있는 AudioSource를 자동 탐색하여 발소리/점프 소스에 할당합니다.
+    /// </summary>
+    private void TryAssignCameraAudioSource()
+    {
+        if (_cameraSourceResolveAttempted && _footstepSource != null && _jumpSource != null)
+            return;
+
+        _cameraSourceResolveAttempted = true;
+
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+            return;
+
+        AudioSource cameraAudioSource = mainCamera.GetComponent<AudioSource>();
+        if (cameraAudioSource == null)
+            return;
+
+        if (_footstepSource == null)
+            _footstepSource = cameraAudioSource;
+
+        if (_jumpSource == null)
+            _jumpSource = cameraAudioSource;
+    }
+
+    /// <summary>
+    /// 외부 이동 상태를 수신해 발소리 재생 판단 기준을 갱신합니다.
+    /// </summary>
+    public void SetMovementState(bool isGrounded, float horizontalSpeed, bool hasMoveInput)
+    {
+        _isGrounded = isGrounded;
+        _horizontalSpeed = Mathf.Max(0f, horizontalSpeed);
+        _hasMoveInput = hasMoveInput;
+    }
+
+    /// <summary>
+    /// 점프 성공 시점에 호출되어 점프 효과음을 1회 재생합니다.
+    /// </summary>
+    public void PlayJump()
+    {
+        if (!CanPlaySfx())
+            return;
+
+        if (_jumpSource == null || _jumpClip == null)
+        {
+            if (_debugSfxLog)
+                Debug.LogWarning("[PlayerSfxController] Jump 재생 실패: AudioSource 또는 Clip 누락");
+            return;
+        }
+
+        _jumpSource.pitch = Random.Range(_pitchMin, _pitchMax);
+        _jumpSource.PlayOneShot(_jumpClip, _jumpVolume);
+    }
+
+    /// <summary>
+    /// 현재 상태가 발소리 재생 조건을 만족하는지 판정합니다.
+    /// </summary>
+    private bool ShouldPlayFootstep()
+    {
+        if (_groundedRequiredForFootstep && !_isGrounded)
+            return false;
+
+        if (!_hasMoveInput)
+            return false;
+
+        return _horizontalSpeed >= _minMoveSpeedForFootstep;
+    }
+
+    /// <summary>
+    /// 내부 발소리 클립을 랜덤 선택하여 1회 재생합니다.
+    /// </summary>
+    private void PlayFootstepInternal()
+    {
+        if (_footstepSource == null || _footstepClips == null || _footstepClips.Length == 0)
+        {
+            if (_debugSfxLog)
+                Debug.LogWarning("[PlayerSfxController] Footstep 재생 실패: AudioSource 또는 Clip 배열 누락");
+            return;
+        }
+
+        AudioClip clip = _footstepClips[Random.Range(0, _footstepClips.Length)];
+        if (clip == null)
+            return;
+
+        _footstepSource.pitch = Random.Range(_pitchMin, _pitchMax);
+        _footstepSource.PlayOneShot(clip, _footstepVolume);
+    }
+
+    /// <summary>
+    /// 정책에 따라 현재 인스턴스가 SFX를 출력 가능한지 판정합니다.
+    /// </summary>
+    private bool CanPlaySfx()
+    {
+        if (!_playOnlyForLocalOwner)
+            return true;
+
+        if (_networkObject == null)
+            return true;
+
+        return _networkObject.IsOwner;
+    }
+}

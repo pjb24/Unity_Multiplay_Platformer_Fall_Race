@@ -92,6 +92,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [Header("Visual")]
     [SerializeField] private Transform _visualRoot;
 
+    [Header("Sfx")]
+    /// <summary>플레이어 이동/점프 사운드를 제어하는 컴포넌트 참조입니다.</summary>
+    [SerializeField] private PlayerSfxController _playerSfxController;
+
     [Header("Debug")]
     [SerializeField] private bool _logStopImmediately = false;
 
@@ -164,6 +168,10 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         // 비주얼 부모가 지정되지 않으면 자기 자신을 사용합니다.
         if (_visualRoot == null)
             _visualRoot = transform;
+
+        // SFX 컨트롤러가 누락된 경우 동일 오브젝트에서 자동으로 탐색합니다.
+        if (_playerSfxController == null)
+            _playerSfxController = GetComponent<PlayerSfxController>();
 
         // 발이 지면에서 떨어지는 시점 기준값 초기화입니다.
         _liftOffY = transform.position.y;
@@ -447,6 +455,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         if (_resultFeelActive.Value)
         {
+            UpdateMovementSfxState(false, 0f, false);
             TriggerAnimatorState(MotionAnimState.Feeling);
             return;
         }
@@ -480,6 +489,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             if (shouldFall)
                 _fallStateLockedUntilGrounded = true;
 
+            UpdateMovementSfxState(false, 0f, _inputStrength > 0f);
             TriggerAnimatorState(shouldFall ? MotionAnimState.Fall : MotionAnimState.Jump);
             return;
         }
@@ -507,6 +517,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         if (_landedThisFrame && hasMoveInput)
             isRunning = true;
 
+        UpdateMovementSfxState(true, horizontalVelocity.magnitude, hasMoveInput);
         TriggerAnimatorState(isRunning ? MotionAnimState.Running : MotionAnimState.Idle);
     }
 
@@ -603,6 +614,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
                 break;
             case MotionAnimState.Jump:
                 _animator.SetTrigger(_jumpParam);
+                PlayJumpSfx();
                 break;
             case MotionAnimState.Fall:
                 _animator.SetTrigger(_fallParam);
@@ -613,6 +625,24 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         }
 
         _lastAnimState = nextState;
+    }
+
+    /// <summary>현재 이동 상태를 SFX 컨트롤러에 전달해 발소리 조건을 갱신합니다.</summary>
+    private void UpdateMovementSfxState(bool isGrounded, float horizontalSpeed, bool hasMoveInput)
+    {
+        if (_playerSfxController == null)
+            return;
+
+        _playerSfxController.SetMovementState(isGrounded, horizontalSpeed, hasMoveInput);
+    }
+
+    /// <summary>점프 상태 진입 시 점프 SFX를 1회 재생합니다.</summary>
+    private void PlayJumpSfx()
+    {
+        if (_playerSfxController == null)
+            return;
+
+        _playerSfxController.PlayJump();
     }
 
     /// <summary>
