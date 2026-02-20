@@ -21429,6 +21429,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Row UI Template
       objectReference: {fileID: 0}
+    - target: {fileID: 9218555090168956462, guid: 9639362ffff0f4a4895cc8cf7fbfdf3d, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []

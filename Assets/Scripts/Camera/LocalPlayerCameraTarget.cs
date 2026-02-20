@@ -125,10 +125,19 @@ public sealed class LocalPlayerCameraTarget : NetworkBehaviour
     /// 오너 클라이언트가 자신의 표시 이름을 서버에 제출합니다.
     /// </summary>
     [Rpc(SendTo.Server)]
-    private void SubmitDisplayNameServerRpc(FixedString64Bytes requestedName)
+    private void SubmitDisplayNameServerRpc(FixedString64Bytes requestedName, RpcParams rpcParams = default)
     {
-        string sanitizedName = SanitizeDisplayName(requestedName.ToString(), OwnerClientId);
+        // 이름표 표시 규칙으로 정규화한 최종 이름 문자열입니다.
+        string sanitizedName = BuildSanitizedDisplayName(requestedName.ToString(), OwnerClientId);
         _displayName.Value = new FixedString64Bytes(sanitizedName);
+
+        // RPC를 보낸 실제 클라이언트 식별자입니다.
+        ulong senderClientId = rpcParams.Receive.SenderClientId;
+
+        // 결과표와 이름표를 동일한 이름 소스로 맞추기 위한 StageProgress 참조입니다.
+        StageProgressController stageProgress = StageProgressController.Instance;
+        if (stageProgress != null && stageProgress.IsServer)
+            stageProgress.CacheApprovedDisplayName_Server(senderClientId, sanitizedName);
     }
 
     /// <summary>
@@ -147,7 +156,8 @@ public sealed class LocalPlayerCameraTarget : NetworkBehaviour
         if (_nameTagText == null)
             return;
 
-        string sanitizedName = SanitizeDisplayName(displayName.ToString(), OwnerClientId);
+        // 네트워크 동기화 값을 정책 기준으로 정규화한 이름표 표시 문자열입니다.
+        string sanitizedName = BuildSanitizedDisplayName(displayName.ToString(), OwnerClientId);
         _nameTagText.text = sanitizedName;
         _nameTagText.color = _friendlyNameColor;
     }
@@ -355,16 +365,15 @@ public sealed class LocalPlayerCameraTarget : NetworkBehaviour
     /// <summary>
     /// 표시 이름 정책(최대 길이, 공백 방지, 기본값)을 적용한 문자열을 반환합니다.
     /// </summary>
-    private string SanitizeDisplayName(string rawName, ulong clientId)
+    private string BuildSanitizedDisplayName(string rawName, ulong clientId)
     {
-        string trimmed = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim();
-        if (string.IsNullOrEmpty(trimmed))
-            trimmed = BuildDefaultDisplayName(clientId);
-
-        if (trimmed.Length > Mathf.Max(1, _maxDisplayNameLength))
-            trimmed = trimmed.Substring(0, Mathf.Max(1, _maxDisplayNameLength));
-
-        return trimmed;
+        // raw 입력이 비어있을 때 사용할 기본 User 이름 원본 문자열입니다.
+        string fallbackRawName = BuildDefaultDisplayName(clientId);
+        // 공통 정책으로 정규화한 표시 이름 문자열입니다.
+        string sanitizedName = string.IsNullOrWhiteSpace(rawName)
+            ? DisplayNamePolicy.Sanitize(fallbackRawName)
+            : DisplayNamePolicy.Sanitize(rawName);
+        return sanitizedName;
     }
 
     /// <summary>
@@ -372,9 +381,10 @@ public sealed class LocalPlayerCameraTarget : NetworkBehaviour
     /// </summary>
     private string BuildInitialDisplayName()
     {
+        // 로컬 세션에서 입력한 사용자 이름 후보 문자열입니다.
         string preferredName = QuickSessionContext.Instance != null ? QuickSessionContext.Instance.LocalUsername : null;
         if (!string.IsNullOrWhiteSpace(preferredName))
-            return preferredName;
+            return DisplayNamePolicy.Sanitize(preferredName);
 
         return BuildDefaultDisplayName(OwnerClientId);
     }
@@ -384,7 +394,9 @@ public sealed class LocalPlayerCameraTarget : NetworkBehaviour
     /// </summary>
     private static string BuildDefaultDisplayName(ulong clientId)
     {
-        return $"Player {clientId}";
+        // 공통 사용자 기본 이름 규칙에 맞춘 원본 문자열입니다.
+        string fallbackRawName = $"User{clientId}";
+        return DisplayNamePolicy.Sanitize(fallbackRawName);
     }
 
     /// <summary>

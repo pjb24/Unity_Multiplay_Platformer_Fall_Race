@@ -32,6 +32,14 @@ public sealed class ConnectionApprovalHandler : MonoBehaviour
         _nm.ConnectionApprovalCallback -= OnApproval;
     }
 
+    /// <summary>
+    /// 승인 콜백에서 전달된 연결 페이로드를 표시 이름으로 변환합니다.
+    /// </summary>
+    private static string ExtractDisplayNameFromPayload(byte[] payload)
+    {
+        return DisplayNamePolicy.ParseConnectionPayload(payload);
+    }
+
     private void OnApproval(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
     {
         // 기본값 세팅 (NGO 권장 패턴)
@@ -101,6 +109,14 @@ public sealed class ConnectionApprovalHandler : MonoBehaviour
             response.Reason = "not_in_lobby";
             return;
         }
+
+        // 승인 요청 페이로드에서 복원한 표시 이름 문자열입니다.
+        string payloadDisplayName = ExtractDisplayNameFromPayload(request.Payload);
+
+        // StageProgress 서버 기록 테이블의 초기 표시 이름으로 캐시합니다.
+        var stageProgress = StageProgressController.Instance;
+        if (stageProgress != null && stageProgress.IsServer)
+            stageProgress.CacheApprovedDisplayName_Server(request.ClientNetworkId, payloadDisplayName);
 
         // 승인
         response.Approved = true;

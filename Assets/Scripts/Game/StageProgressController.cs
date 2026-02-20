@@ -82,6 +82,11 @@ public sealed class StageProgressController : NetworkBehaviour
     private readonly Dictionary<ulong, int> _recordIndexByClient = new Dictionary<ulong, int>(8);
 
     /// <summary>
+    /// 승인 페이로드에서 수집한 클라이언트별 표시 이름 캐시입니다.
+    /// </summary>
+    private readonly Dictionary<ulong, string> _approvedDisplayNameByClient = new Dictionary<ulong, string>(8);
+
+    /// <summary>
     /// 클라이언트 HUD 정렬용 레이스 기록 스냅샷 재사용 버퍼입니다.
     /// </summary>
     private readonly List<PlayerRaceRecordSnapshot> _raceRecordSnapshotBuffer = new List<PlayerRaceRecordSnapshot>(8);
@@ -1130,6 +1135,7 @@ public sealed class StageProgressController : NetworkBehaviour
         if (_clearedCountByClient.Remove(clientId))
         {
             _clearedStageSetByClient.Remove(clientId);
+            _approvedDisplayNameByClient.Remove(clientId);
             RemoveRaceRecord_Server(clientId);
             Debug.Log($"[StageProgress] Client disconnected removed. clientId={clientId}");
         }
@@ -1154,6 +1160,27 @@ public sealed class StageProgressController : NetworkBehaviour
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 승인 단계에서 전달된 표시 이름을 서버 캐시에 저장합니다.
+    /// </summary>
+    public void CacheApprovedDisplayName_Server(ulong clientId, string rawDisplayName)
+    {
+        if (!IsServer)
+            return;
+
+        // 승인 페이로드에서 받은 원본 이름을 정규화한 결과 문자열입니다.
+        string sanitizedName = DisplayNamePolicy.Sanitize(rawDisplayName);
+        _approvedDisplayNameByClient[clientId] = sanitizedName;
+
+        if (_recordIndexByClient.TryGetValue(clientId, out int existingIndex))
+        {
+            // 이미 생성된 기록 행의 표시 이름을 즉시 갱신하기 위한 임시 레코드 변수입니다.
+            PlayerRaceRecordNet existingRecord = _raceRecords[existingIndex];
+            existingRecord.displayName = new FixedString64Bytes(sanitizedName);
+            _raceRecords[existingIndex] = existingRecord;
+        }
     }
 
     // "Goal 도달"이 아니라 "Resolved(Goal/Retire)" 기준
@@ -1195,10 +1222,9 @@ public sealed class StageProgressController : NetworkBehaviour
                 return;
         }
 
-        // 비어있는 이름을 방지하기 위해 기본 표시 이름을 사용합니다.
-        string sanitizedName = string.IsNullOrWhiteSpace(displayName.ToString()) ? BuildDefaultDisplayName(sender) : displayName.ToString().Trim();
-        if (sanitizedName.Length > 24)
-            sanitizedName = sanitizedName.Substring(0, 24);
+        // RPC 입력값을 공통 정책으로 정규화한 표시 이름입니다.
+        string sanitizedName = DisplayNamePolicy.Sanitize(displayName.ToString());
+        _approvedDisplayNameByClient[sender] = sanitizedName;
 
         var record = _raceRecords[index];
         record.displayName = new FixedString64Bytes(sanitizedName);
@@ -1357,10 +1383,13 @@ public sealed class StageProgressController : NetworkBehaviour
         if (_recordIndexByClient.ContainsKey(clientId))
             return;
 
+        // 승인 시점 캐시에 저장된 표시 이름(없으면 기본 이름)을 선택한 문자열입니다.
+        string initialDisplayName = ResolveInitialDisplayName(clientId);
+
         var entry = new PlayerRaceRecordNet
         {
             clientId = clientId,
-            displayName = new FixedString64Bytes(BuildDefaultDisplayName(clientId)),
+            displayName = new FixedString64Bytes(initialDisplayName),
             stage1Seconds = MissingRecordValue,
             stage2Seconds = MissingRecordValue,
             stage3Seconds = MissingRecordValue,
@@ -1422,10 +1451,61 @@ public sealed class StageProgressController : NetworkBehaviour
     }
 
     /// <summary>
+    /// 신규 기록 행 생성 시 사용할 초기 표시 이름을 결정합니다.
+    /// </summary>
+    private string ResolveInitialDisplayName(ulong clientId)
+    {
+        if (_approvedDisplayNameByClient.TryGetValue(clientId, out string cachedName))
+            return DisplayNamePolicy.Sanitize(cachedName);
+
+        // 서버(Host) 자신의 레코드 생성 시 NetworkConfig payload 이름을 우선 사용합니다.
+        if (TryResolveDisplayNameFromNetworkConfigPayload_Server(clientId, out string payloadDisplayName))
+            return payloadDisplayName;
+
+        return BuildDefaultDisplayName(clientId);
+    }
+
+    /// <summary>
+    /// NetworkManager 설정의 연결 payload에서 표시 이름을 복원합니다.
+    /// </summary>
+    private bool TryResolveDisplayNameFromNetworkConfigPayload_Server(ulong clientId, out string displayName)
+    {
+        displayName = string.Empty;
+
+        if (!IsServer)
+            return false;
+
+        // 현재 서버 인스턴스의 NetworkManager 참조 변수입니다.
+        NetworkManager networkManager = NetworkManager;
+        if (networkManager == null || networkManager.NetworkConfig == null)
+            return false;
+
+        // Host 자신 레코드에만 NetworkConfig payload를 적용하기 위한 서버 클라이언트 식별자입니다.
+        ulong serverClientId = NetworkManager.ServerClientId;
+        if (clientId != serverClientId)
+            return false;
+
+        // NetworkConfig에 저장된 이름 payload 원본 바이트 배열입니다.
+        byte[] payload = networkManager.NetworkConfig.ConnectionData;
+        if (payload == null || payload.Length == 0)
+            return false;
+
+        // payload 디코딩 후 공통 정책으로 정규화한 표시 이름 문자열입니다.
+        string sanitizedPayloadName = DisplayNamePolicy.ParseConnectionPayload(payload);
+        if (string.IsNullOrWhiteSpace(sanitizedPayloadName))
+            return false;
+
+        displayName = sanitizedPayloadName;
+        return true;
+    }
+
+    /// <summary>
     /// 표시 이름이 없을 때 사용할 기본 이름을 생성합니다.
     /// </summary>
     private string BuildDefaultDisplayName(ulong clientId)
     {
-        return $"Player {clientId}";
+        // 다른 경로와 동일한 User 접두 기본 이름 생성을 위한 원본 문자열입니다.
+        string fallbackRawName = $"User{clientId}";
+        return DisplayNamePolicy.Sanitize(fallbackRawName);
     }
 }

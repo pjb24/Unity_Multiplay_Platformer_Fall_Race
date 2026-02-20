@@ -109,7 +109,7 @@ public sealed class QuickSessionContext : MonoBehaviour
     // ============================
     public async Task<SessionResult> TryJoinAsClientThenEnterGameAsync(string username)
     {
-        LocalUsername = SanitizeLocalUsername(username);
+        LocalUsername = DisplayNamePolicy.Sanitize(username);
         var res = await JoinLobbyAsClientAsync(LocalUsername);
         if (!res.ok)
             Debug.LogWarning($"[QuickSession] fallback 발생: TryJoinAsClient failed: {res.failCode} / {res.message}");
@@ -118,7 +118,7 @@ public sealed class QuickSessionContext : MonoBehaviour
 
     public async Task<SessionResult> TryStartAsHostThenEnterGameAsync(string username)
     {
-        LocalUsername = SanitizeLocalUsername(username);
+        LocalUsername = DisplayNamePolicy.Sanitize(username);
         var res = await CreateLobbyAsHostAsync(LocalUsername);
         if (!res.ok)
             Debug.LogWarning($"[QuickSession] fallback 발생: TryStartAsHost failed: {res.failCode} / {res.message}");
@@ -584,6 +584,9 @@ public sealed class QuickSessionContext : MonoBehaviour
             // 서버 시작 확인 후 씬 전환 (한 프레임 미뤄도 됨)
             nm.OnServerStarted += OnServerStarted;
 
+            // NGO ConnectionData에 로비 입력 이름을 싣습니다.
+            ApplyConnectionPayloadToNetworkManager(nm, username);
+
             // NGO StartHost
             if (!nm.StartHost())
             {
@@ -675,6 +678,9 @@ public sealed class QuickSessionContext : MonoBehaviour
             transport.SetRelayServerData(BuildRelayServerDataFromJoinAllocation(joinAllocation, protocol));
 
             nm.OnClientConnectedCallback += OnClientConnected;
+
+            // NGO ConnectionData에 로비 입력 이름을 싣습니다.
+            ApplyConnectionPayloadToNetworkManager(nm, username);
 
             // NGO StartClient
             if (!nm.StartClient())
@@ -956,15 +962,19 @@ public sealed class QuickSessionContext : MonoBehaviour
     }
 
     /// <summary>
-    /// 표시 이름 입력값을 정리하고 비어 있으면 기본 이름을 생성합니다.
+    /// Netcode 연결 페이로드에 정규화된 사용자 이름을 기록합니다.
     /// </summary>
-    private static string SanitizeLocalUsername(string rawName)
+    private static void ApplyConnectionPayloadToNetworkManager(NetworkManager networkManager, string username)
     {
-        string trimmed = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim();
-        if (string.IsNullOrEmpty(trimmed))
-            return $"User{UnityEngine.Random.Range(1000, 9999)}";
+        if (networkManager == null)
+            return;
 
-        return trimmed;
+        if (networkManager.NetworkConfig == null)
+            return;
+
+        // 승인 콜백에서 읽을 연결 페이로드 바이트 배열입니다.
+        byte[] payload = DisplayNamePolicy.BuildConnectionPayload(username);
+        networkManager.NetworkConfig.ConnectionData = payload;
     }
 
     // ============================

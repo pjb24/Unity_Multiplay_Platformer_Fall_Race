@@ -118,15 +118,10 @@ public sealed class MainMenuUIController : MonoBehaviour
     /// <summary>입력값 또는 랜덤 규칙으로 사용자 이름을 결정합니다.</summary>
     private string GetOrGenerateUsername()
     {
+        // 입력 필드에서 가져온 원본 이름 문자열입니다.
         string raw = _usernameInput != null ? _usernameInput.text : null;
-        raw = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
 
-        if (string.IsNullOrEmpty(raw))
-        {
-            // 규칙: 비어있으면 생성 후 사용
-            return $"User{Random.Range(1000, 9999)}";
-        }
-        return raw;
+        return DisplayNamePolicy.Sanitize(raw);
     }
 
     /// <summary>메뉴 버튼의 입력 가능 상태를 일괄 반영합니다.</summary>
