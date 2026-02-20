@@ -651,12 +651,46 @@ public sealed class GameSessionController : NetworkBehaviour
             return;
         }
 
-        _assignedCharacterIdByClient.Clear();
-        _usedCharacterIds.Clear();
-        _characterAssignments.Clear();
+        // 현재 접속 중인 클라이언트 집합을 기준으로 캐릭터 배정 정합성을 맞춥니다.
+        HashSet<ulong> connectedClientIds = new HashSet<ulong>(NetworkManager.ConnectedClientsIds);
 
-        foreach (ulong id in NetworkManager.ConnectedClientsIds)
-            AssignCharacterIfMissing_Server(id);
+        // 접속이 끊긴 클라이언트의 배정 정보는 제거합니다.
+        List<ulong> removedClientIds = new List<ulong>();
+        foreach (KeyValuePair<ulong, string> assignment in _assignedCharacterIdByClient)
+        {
+            if (connectedClientIds.Contains(assignment.Key))
+                continue;
+
+            removedClientIds.Add(assignment.Key);
+        }
+
+        for (int i = 0; i < removedClientIds.Count; i++)
+            CleanupPlayerData_Server(removedClientIds[i]);
+
+        // 재사용 여부 추적 세트를 현재 배정 기준으로 재구성합니다.
+        _usedCharacterIds.Clear();
+
+        foreach (KeyValuePair<ulong, string> assignment in _assignedCharacterIdByClient)
+        {
+            string assignedId = assignment.Value;
+            if (string.IsNullOrEmpty(assignedId) || string.Equals(assignedId, _fallbackCharacterId, StringComparison.Ordinal))
+                continue;
+
+            _usedCharacterIds.Add(assignedId);
+        }
+
+        // 네트워크 동기화 리스트에 누락된 항목이 있으면 보강하고, 신규 접속자만 새로 배정합니다.
+        foreach (ulong clientId in connectedClientIds)
+        {
+            if (_assignedCharacterIdByClient.TryGetValue(clientId, out string assignedId))
+            {
+                bool isFallback = string.Equals(assignedId, _fallbackCharacterId, StringComparison.Ordinal);
+                UpsertCharacterAssignmentEntry_Server(clientId, assignedId, isFallback);
+                continue;
+            }
+
+            AssignCharacterIfMissing_Server(clientId);
+        }
     }
 
     // ============================
