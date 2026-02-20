@@ -4457,6 +4457,7 @@ MonoBehaviour:
   _stageCheckpointIndexStride: 1000
   _goalWindowSeconds: 60
   _retirePenaltySeconds: 90
+  _finalStageResultWaitSeconds: 3
 --- !u!4 &408347512
 Transform:
   m_ObjectHideFlags: 0

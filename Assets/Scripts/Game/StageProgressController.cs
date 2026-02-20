@@ -24,6 +24,12 @@ public sealed class StageProgressController : NetworkBehaviour
     [Header("Retire Rule")]
     [SerializeField] private float _retirePenaltySeconds = 90f;
 
+    [Header("Final Stage Result")]
+    /// <summary>
+    /// 마지막 스테이지 종료 후 결과표를 확인할 수 있도록 유지할 대기 시간(초)입니다.
+    /// </summary>
+    [SerializeField] private float _finalStageResultWaitSeconds = 3f;
+
     /// <summary>
     /// 기록 미입력 상태를 표현하기 위한 센티넬 값입니다.
     /// </summary>
@@ -75,6 +81,16 @@ public sealed class StageProgressController : NetworkBehaviour
 
     // Server only: stageIndex -> run start time (server time)
     private readonly Dictionary<int, double> _stageRunStartTimeByStage = new Dictionary<int, double>();
+
+    /// <summary>
+    /// 마지막 스테이지 Result 상태에서 매치를 종료할 서버 시각(NetworkTime)입니다.
+    /// </summary>
+    private double _finalStageResultEndAtServerTime;
+
+    /// <summary>
+    /// 마지막 스테이지 Result 대기 종료 타이머 활성화 여부입니다.
+    /// </summary>
+    private bool _isFinalStageResultWaitArmed;
 
     /// <summary>
     /// 클라이언트별 기록 데이터 인덱스 캐시입니다.
@@ -303,6 +319,7 @@ public sealed class StageProgressController : NetworkBehaviour
     {
         if (!IsServer) return;
         ResolveGoalWindowTimeouts_Server();
+        ProcessFinalStageResultWait_Server();
     }
 
     public override void OnNetworkSpawn()
@@ -384,6 +401,7 @@ public sealed class StageProgressController : NetworkBehaviour
 
                 RebuildFromConnectedClients();
                 RebuildRaceRecordTable_Server();
+                DisarmFinalStageResultWait_Server();
                 Debug.Log("[StageProgress] Sync by GameSession: Lobby -> Gate Close + Rebuild.");
                 break;
 
@@ -392,6 +410,7 @@ public sealed class StageProgressController : NetworkBehaviour
                 SetGateForLocalPlayerRpc(false, E_InputGateReason.Countdown);
                 UpdateStageIndexForCountdown(prev);
                 WarpPlayersToSpawnPoints_Server("countdown_enter");
+                DisarmFinalStageResultWait_Server();
 
                 Debug.Log("[StageProgress] Sync by GameSession: Countdown -> Gate Close.");
                 break;
@@ -400,6 +419,7 @@ public sealed class StageProgressController : NetworkBehaviour
                 // 달리기 시작
                 SetGateForLocalPlayerRpc(true, E_InputGateReason.Run);
                 RecordStageRunStartTime_Server(_currentStageIndex);
+                DisarmFinalStageResultWait_Server();
 
                 Debug.Log("[StageProgress] Sync by GameSession: Running -> Gate Open.");
                 break;
@@ -407,6 +427,7 @@ public sealed class StageProgressController : NetworkBehaviour
             case E_GameSessionState.Result:
                 SetGateForLocalPlayerRpc(false, E_InputGateReason.Result);
                 ApplyResultFeelingToPlayers_Server();
+                TryArmFinalStageResultWait_Server();
                 Debug.Log("[StageProgress] Sync by GameSession: Result -> Gate Close.");
                 break;
 
@@ -589,12 +610,6 @@ public sealed class StageProgressController : NetworkBehaviour
                 Debug.Log($"[StageProgress] All players resolved stage -> RequestEnterResult. stageIndex={stageIndex}");
             }
         }
-
-        // ===== 전원 모든 스테이지 완료 -> EndMatch =====
-        if (IsAllConnectedPlayersFinished_Server())
-        {
-            EndMatch_Server("all_players_finished");
-        }
     }
 
     // =========================================
@@ -763,11 +778,71 @@ public sealed class StageProgressController : NetworkBehaviour
                 Debug.Log($"[StageProgress] Timeout resolved all -> RequestEnterResult. stageIndex={stageIndex}");
             }
         }
+    }
 
-        if (IsAllConnectedPlayersFinished_Server())
-        {
-            EndMatch_Server("all_players_finished");
-        }
+    /// <summary>
+    /// 마지막 스테이지 결과 상태 진입 시 결과표 확인 대기 타이머를 활성화합니다.
+    /// </summary>
+    private void TryArmFinalStageResultWait_Server()
+    {
+        if (!IsServer)
+            return;
+
+        if (_isFinalStageResultWaitArmed)
+            return;
+
+        if (_stagesToFinish <= 0)
+            return;
+
+        if (_currentStageIndex < _stagesToFinish - 1)
+            return;
+
+        if (!IsAllConnectedPlayersFinished_Server())
+            return;
+
+        double now = NetworkManager.ServerTime.Time;
+        _finalStageResultEndAtServerTime = now + Mathf.Max(0f, _finalStageResultWaitSeconds);
+        _isFinalStageResultWaitArmed = true;
+
+        Debug.Log($"[StageProgress] Final stage result wait armed. now={now:F3}, endAt={_finalStageResultEndAtServerTime:F3}");
+    }
+
+    /// <summary>
+    /// 마지막 스테이지 결과표 확인 대기 타이머 만료 여부를 검사하고 매치를 종료합니다.
+    /// </summary>
+    private void ProcessFinalStageResultWait_Server()
+    {
+        if (!IsServer)
+            return;
+
+        if (!_isFinalStageResultWaitArmed)
+            return;
+
+        var session = GameSessionController.Instance;
+        if (session == null)
+            return;
+
+        if (session.State != E_GameSessionState.Result)
+            return;
+
+        double now = NetworkManager.ServerTime.Time;
+        if (now < _finalStageResultEndAtServerTime)
+            return;
+
+        DisarmFinalStageResultWait_Server();
+        EndMatch_Server("final_stage_result_wait_elapsed");
+    }
+
+    /// <summary>
+    /// 마지막 스테이지 결과표 확인 대기 타이머를 비활성화하고 시간을 초기화합니다.
+    /// </summary>
+    private void DisarmFinalStageResultWait_Server()
+    {
+        if (!IsServer)
+            return;
+
+        _isFinalStageResultWaitArmed = false;
+        _finalStageResultEndAtServerTime = 0.0;
     }
 
     // =========================================
@@ -1076,6 +1151,8 @@ public sealed class StageProgressController : NetworkBehaviour
         _stageRunStartTimeByStage.Clear();
         _currentStageStartAtServerTime.Value = 0.0;
         _goalWindowEndAtServerTime.Value = 0.0;
+        _finalStageResultEndAtServerTime = 0.0;
+        _isFinalStageResultWaitArmed = false;
 
         foreach (var id in NetworkManager.ConnectedClientsIds)
         {
