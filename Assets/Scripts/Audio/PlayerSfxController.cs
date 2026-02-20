@@ -18,6 +18,8 @@ public sealed class PlayerSfxController : MonoBehaviour
     [SerializeField] private AudioClip[] _footstepClips;
     /// <summary>점프 성공 시 1회 재생할 점프 클립입니다.</summary>
     [SerializeField] private AudioClip _jumpClip;
+    /// <summary>Goal 진입 시 1회 재생할 골 클립입니다. 미할당 시 점프 클립을 대체 사용합니다.</summary>
+    [SerializeField] private AudioClip _goalClip;
 
     [Header("Footstep")]
     /// <summary>발소리 기본 재생 간격(초)입니다.</summary>
@@ -32,6 +34,8 @@ public sealed class PlayerSfxController : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float _footstepVolume = 0.75f;
     /// <summary>점프 사운드 볼륨 크기입니다.</summary>
     [SerializeField, Range(0f, 1f)] private float _jumpVolume = 0.9f;
+    /// <summary>Goal 사운드 볼륨 크기입니다.</summary>
+    [SerializeField, Range(0f, 1f)] private float _goalVolume = 1.0f;
     /// <summary>반복감 완화를 위한 피치 랜덤 최소값입니다.</summary>
     [SerializeField, Range(0.5f, 2f)] private float _pitchMin = 0.96f;
     /// <summary>반복감 완화를 위한 피치 랜덤 최대값입니다.</summary>
@@ -168,6 +172,34 @@ public sealed class PlayerSfxController : MonoBehaviour
         _jumpSource.pitch = Random.Range(_pitchMin, _pitchMax);
         _jumpSource.PlayOneShot(_jumpClip, _jumpVolume);
         _jumpPlaybackLockTimer = _jumpClip.length;
+    }
+
+    /// <summary>
+    /// Goal 진입 시점에 호출되어 Goal 효과음을 1회 재생합니다.
+    /// </summary>
+    public void PlayGoal()
+    {
+        if (!CanPlaySfx())
+            return;
+
+        if (_jumpSource == null)
+        {
+            if (_debugSfxLog)
+                Debug.LogWarning("[PlayerSfxController] Goal 재생 실패: AudioSource 누락");
+            return;
+        }
+
+        // Goal 클립 미할당 시 기존 점프 클립을 대체 사용합니다.
+        AudioClip goalClip = _goalClip != null ? _goalClip : _jumpClip;
+        if (goalClip == null)
+        {
+            if (_debugSfxLog)
+                Debug.LogWarning("[PlayerSfxController] Goal 재생 실패: Goal/Jump Clip 누락");
+            return;
+        }
+
+        _jumpSource.pitch = Random.Range(_pitchMin, _pitchMax);
+        _jumpSource.PlayOneShot(goalClip, _goalVolume);
     }
 
     /// <summary>

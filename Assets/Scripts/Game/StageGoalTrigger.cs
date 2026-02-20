@@ -13,6 +13,9 @@ public sealed class StageGoalTrigger : MonoBehaviour
     // 세션 상태 차단 로그를 1회만 출력하기 위한 플래그.
     private bool _hasLoggedSessionBlocked;
 
+    // 동일 Goal 진입 이벤트에서 SFX 재생 중복을 방지하기 위한 플래그.
+    private bool _hasPlayedGoalSfx;
+
     private void Awake()
     {
         if (_stageProgress == null)
@@ -48,8 +51,27 @@ public sealed class StageGoalTrigger : MonoBehaviour
             return;
         }
 
+        TryPlayGoalSfx(other);
+
         _stageProgress.ReportStageClearedRpc(_stageIndex);
         _reported = true;
+    }
+
+    /// <summary>
+    /// Goal에 진입한 로컬 오너 플레이어에게 Goal SFX를 1회 재생합니다.
+    /// </summary>
+    private void TryPlayGoalSfx(Collider other)
+    {
+        if (_hasPlayedGoalSfx)
+            return;
+
+        // Goal에 진입한 플레이어 계층에서 SFX 컨트롤러를 탐색합니다.
+        PlayerSfxController playerSfx = other.GetComponentInParent<PlayerSfxController>();
+        if (playerSfx == null)
+            return;
+
+        playerSfx.PlayGoal();
+        _hasPlayedGoalSfx = true;
     }
 
     /// <summary>
