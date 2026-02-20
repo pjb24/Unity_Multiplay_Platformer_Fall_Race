@@ -70,32 +70,32 @@ public sealed class MainMenuUIController : MonoBehaviour
         string username = GetOrGenerateUsername();
 
         SetInteractable(false);
-        SetStatus($"QuickSession 시작 중... ({username})");
+        SetStatus($"Starting QuickSession... ({username})");
 
         // 1) Client Quick Join 우선 시도
-        SetStatus("로비 참가 시도 중...");
+        SetStatus("Attempting to join lobby...");
         var joinResult = await ctx.TryJoinAsClientThenEnterGameAsync(username);
 
         if (joinResult.ok)
         {
-            SetStatus("Client 참가 성공. Game 로드 중...");
+            SetStatus("Client joined successfully. Loading game...");
             return;
         }
 
         Debug.LogWarning($"[MainMenu] QuickSession fallback 발생: join attempt failed: {joinResult.failCode} / {joinResult.message}");
-        SetStatus("참가 불가. Host 로비 생성 시도 중...");
+        SetStatus("Unable to join. Attempting to create host lobby...");
 
         // 2) Join 불가면 Host로 Lobby 생성
         var hostResult = await ctx.TryStartAsHostThenEnterGameAsync(username);
 
         if (hostResult.ok)
         {
-            SetStatus($"Host 생성 성공. JoinCode={hostResult.relayJoinCode} / Game 로드 중...");
+            SetStatus($"Host created successfully. JoinCode={hostResult.relayJoinCode} / Loading game...");
             return;
         }
 
         Debug.LogWarning($"[MainMenu] QuickSession fallback 발생: host attempt failed: {hostResult.failCode} / {hostResult.message}");
-        SetStatus($"QuickSession 실패: {hostResult.message}");
+        SetStatus($"QuickSession failed: {hostResult.message}");
         SetInteractable(true);
     }
 
@@ -109,7 +109,7 @@ public sealed class MainMenuUIController : MonoBehaviour
         if (ctx == null)
         {
             Debug.LogWarning("[MainMenu] UI fallback 발생: QuickSessionContext.Instance is null. Bootstrap DDOL 확인.");
-            SetStatus("세션 컨텍스트가 없다. Bootstrap부터 시작해라.");
+            SetStatus("Session context is missing. Start from Bootstrap.");
             return false;
         }
         return true;

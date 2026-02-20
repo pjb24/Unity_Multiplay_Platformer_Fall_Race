@@ -95,10 +95,6 @@ public sealed class StageStartKeyboardGuidePlacer : MonoBehaviour
     [Tooltip("시인성 보조용 배경판 사용 여부")]
     [SerializeField] private bool _useBackgroundPanel;
 
-    // 배경판 색상 값이다.
-    [Tooltip("배경판 색상")]
-    [SerializeField] private Color _backgroundColor = new Color(0f, 0f, 0f, 0.35f);
-
     // 배경판 가로/세로 크기 값이다.
     [Tooltip("배경판 가로/세로 크기")]
     [SerializeField] private Vector2 _backgroundSize = new Vector2(6.8f, 2.7f);
@@ -115,7 +111,7 @@ public sealed class StageStartKeyboardGuidePlacer : MonoBehaviour
     /// </summary>
     private void Start()
     {
-        RebuildGuides();
+        // RebuildGuides();
     }
 
 #if UNITY_EDITOR
@@ -242,20 +238,18 @@ public sealed class StageStartKeyboardGuidePlacer : MonoBehaviour
     /// </summary>
     private void CreateBackgroundPanel(Transform parent)
     {
+        // 시인성 보조용 배경판 오브젝트 참조이다.
         var panel = GameObject.CreatePrimitive(PrimitiveType.Quad);
         panel.name = "GuideBackgroundPanel";
         panel.transform.SetParent(parent, false);
         panel.transform.localPosition = new Vector3(0f, 0f, _backgroundDepth);
         panel.transform.localScale = new Vector3(_backgroundSize.x, _backgroundSize.y, 1f);
 
-        var renderer = panel.GetComponent<MeshRenderer>();
-        renderer.sharedMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-        renderer.sharedMaterial.color = _backgroundColor;
-
+        // 생성 직후 물리 충돌을 즉시 비활성화하기 위한 배경판 콜라이더 참조이다.
         var collider = panel.GetComponent<Collider>();
         if (collider != null)
         {
-            Destroy(collider);
+            collider.enabled = false;
         }
     }
 }
