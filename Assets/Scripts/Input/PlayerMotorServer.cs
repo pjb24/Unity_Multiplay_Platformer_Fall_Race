@@ -666,6 +666,29 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     }
 
     /// <summary>
+    /// 서버에서 장애물 피격 사운드 재생을 요청하고 오너 클라이언트에 전달합니다.
+    /// </summary>
+    public void PlayObstacleHitSfx_Server()
+    {
+        if (!IsServer)
+            return;
+
+        PlayObstacleHitSfx_ClientRpc();
+    }
+
+    /// <summary>
+    /// 오너 클라이언트에서 장애물 피격 SFX를 실제로 재생합니다.
+    /// </summary>
+    [Rpc(SendTo.Owner, InvokePermission = RpcInvokePermission.Server, Delivery = RpcDelivery.Unreliable)]
+    private void PlayObstacleHitSfx_ClientRpc()
+    {
+        if (_playerSfxController == null)
+            return;
+
+        _playerSfxController.PlayObstacleHit();
+    }
+
+    /// <summary>
     /// GameSessionController 생성 타이밍이 늦더라도 캐릭터 배정/상태 이벤트 구독을 보장합니다.
     /// </summary>
     private void EnsureCharacterAssignmentEventSubscription()

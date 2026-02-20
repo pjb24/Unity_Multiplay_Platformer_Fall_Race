@@ -131,7 +131,11 @@ public sealed class PusherController : NetworkBehaviour
 
         var motor = playerNetObj.GetComponent<PlayerMotorServer>();
         if (motor != null)
+        {
             motor.ApplyKnockback_Server(impulse, _knockbackControlLockSec);
+            // 푸셔 피격이 확정된 오너에게 충돌 SFX 재생을 요청합니다.
+            motor.PlayObstacleHitSfx_Server();
+        }
         else
             rb.AddForce(impulse, ForceMode.Impulse);
 

@@ -362,7 +362,11 @@ public sealed class RotatingBarController : NetworkBehaviour
 
         var motor = player.GetComponent<PlayerMotorServer>();
         if (motor != null)
+        {
             motor.ApplyKnockback_Server(knockback, _knockbackControlLockSec);
+            // 회전 바 피격이 확정된 오너에게 충돌 SFX 재생을 요청합니다.
+            motor.PlayObstacleHitSfx_Server();
+        }
         else
         {
             var rb = player.GetComponent<Rigidbody>();

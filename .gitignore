@@ -107,3 +107,4 @@ InitTestScene*.unity*
 /[Aa]ssets/Audio/BGM/*.ogg
 /[Aa]ssets/Audio/SFX/Player/*.wav
 /[Aa]ssets/Audio/SFX/Goal/*.wav
+/[Aa]ssets/Audio/SFX/Obstacles/*.wav

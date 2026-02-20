@@ -470,16 +470,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSfxController
   _footstepSource: {fileID: 3495989468485264356}
   _jumpSource: {fileID: 3495989468485264356}
+  _obstacleHitSource: {fileID: 0}
   _footstepClips:
   - {fileID: 8300000, guid: 33b7c0edf4f766a4da3f280827e23366, type: 3}
   _jumpClip: {fileID: 8300000, guid: 80e57a1572e6e244096af6b6db7ec0c0, type: 3}
   _goalClip: {fileID: 8300000, guid: 65e2424ba73cbd146adc7219d48ffb47, type: 3}
+  _obstacleHitClips:
+  - {fileID: 8300000, guid: 3b823cd9b11cbd5498592b5d2bd1116e, type: 3}
+  - {fileID: 8300000, guid: 3e0328c0569ebbc4d8ff3c1f6764aee5, type: 3}
+  - {fileID: 8300000, guid: 544c2b5b9dde908449c59101495b55bb, type: 3}
   _footstepInterval: 0.32
   _minMoveSpeedForFootstep: 0.15
   _groundedRequiredForFootstep: 1
   _footstepVolume: 0.75
   _jumpVolume: 1
   _goalVolume: 1
+  _obstacleHitVolume: 1
   _pitchMin: 0.96
   _pitchMax: 1.04
   _playOnlyForLocalOwner: 1
