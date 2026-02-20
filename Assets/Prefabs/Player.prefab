@@ -401,7 +401,7 @@ MonoBehaviour:
   _fallParam: fall
   _feelParam: feel
   _jumpParam: jump
-  _feelBlendParam: blend feel
+  _feelBlendParam: blend feeling
   _visualRoot: {fileID: 3317578181517039558}
   _playerSfxController: {fileID: 2565881198456973646}
   _logStopImmediately: 0
@@ -488,6 +488,7 @@ MonoBehaviour:
   _obstacleHitVolume: 1
   _pitchMin: 0.96
   _pitchMax: 1.04
+  _obstacleSfxPriorityMinDuration: 0.2
   _playOnlyForLocalOwner: 1
   _debugSfxLog: 0
 --- !u!82 &3495989468485264356

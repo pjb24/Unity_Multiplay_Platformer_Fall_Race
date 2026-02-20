@@ -87,7 +87,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     [SerializeField] private string _fallParam = "fall";
     [SerializeField] private string _feelParam = "feel";
     [SerializeField] private string _jumpParam = "jump";
-    [SerializeField] private string _feelBlendParam = "blend feel";
+    [SerializeField] private string _feelBlendParam = "blend feeling";
 
     [Header("Visual")]
     [SerializeField] private Transform _visualRoot;
@@ -270,7 +270,7 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     }
 
     /// <summary>
-    /// 서버에서 결과 애니메이션(feel + blend feel)을 설정합니다.
+    /// 서버에서 결과 애니메이션(feel + blend feeling)을 설정합니다.
     /// </summary>
     public void SetResultFeeling_Server(float blendFeel)
     {
@@ -640,6 +640,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
                 _animator.SetTrigger(_fallParam);
                 break;
             case MotionAnimState.Feeling:
+                // 결과 연출 시작 직전에 적용할 최신 feel 블렌드 값입니다.
+                float feelingBlendValue = Mathf.Clamp01(_resultFeelBlend.Value);
+                _animator.SetFloat(_feelBlendParam, feelingBlendValue);
                 _animator.SetTrigger(_feelParam);
                 break;
         }
@@ -870,12 +873,15 @@ public sealed class PlayerMotorServer : NetworkBehaviour
     }
 
     /// <summary>
-    /// 결과 연출 활성화 값이 변경될 때 feel 트리거를 발행합니다.
+    /// 결과 연출 활성화 값이 변경될 때 feel 블렌드 값을 먼저 반영한 뒤 feel 트리거를 발행합니다.
     /// </summary>
     private void OnResultFeelingChanged(bool previous, bool current)
     {
         if (current)
         {
+            // feel 시작 직전에 반영할 네트워크 동기화 블렌드 값입니다.
+            float synchronizedFeelBlend = Mathf.Clamp01(_resultFeelBlend.Value);
+            _animator?.SetFloat(_feelBlendParam, synchronizedFeelBlend);
             TriggerAnimatorState(MotionAnimState.Feeling);
             return;
         }

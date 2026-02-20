@@ -438,7 +438,7 @@ public sealed class StageProgressController : NetworkBehaviour
     }
 
     /// <summary>
-    /// 경기 종료 시 상위 75%는 win(0), 하위 25%는 lose(1)로 feel 연출을 동기화합니다.
+    /// 경기 종료 시 최하위 순위만 lose(1), 나머지 순위는 win(0) feel 연출을 동기화합니다.
     /// 동점 처리는 CompletedStageCount + TotalSeconds가 같은 경우 동일 rank로 간주합니다.
     /// </summary>
     private void ApplyResultFeelingToPlayers_Server()
@@ -449,10 +449,11 @@ public sealed class StageProgressController : NetworkBehaviour
         if (!TryGetRaceRecordsSnapshot(out List<PlayerRaceRecordSnapshot> orderedRecords) || orderedRecords == null || orderedRecords.Count == 0)
             return;
 
+        // 현재 스테이지 결과 연출 대상 전체 인원 수입니다.
         int totalPlayers = orderedRecords.Count;
-        int winCutRank = Mathf.CeilToInt(totalPlayers * 0.75f);
-        if (winCutRank <= 0)
-            winCutRank = 1;
+
+        // 최하위 순위(예: 2인=2등, 3인=3등, 4인=4등)를 계산하기 위한 기준 rank입니다.
+        int loseRank = Mathf.Max(1, totalPlayers);
 
         int currentRank = 1;
         for (int i = 0; i < orderedRecords.Count; i++)
@@ -467,7 +468,8 @@ public sealed class StageProgressController : NetworkBehaviour
                     currentRank = i + 1;
             }
 
-            float blendFeel = currentRank <= winCutRank ? 0f : 1f;
+            // 최하위 순위면 lose(1), 그 외 순위는 win(0) 블렌드 값입니다.
+            float blendFeel = currentRank >= loseRank ? 1f : 0f;
 
             if (!NetworkManager.ConnectedClients.TryGetValue(record.ClientId, out NetworkClient networkClient))
                 continue;
