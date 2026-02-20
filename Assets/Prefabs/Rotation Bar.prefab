@@ -170,6 +170,8 @@ MonoBehaviour:
   _knockbackControlLockSec: 0.25
   _hitDebounceSec: 0.2
   _invincibleAfterHitSec: 0.3
+  _hitParticlePrefab: {fileID: 6424076732465889602, guid: a10ac89c5d671f5418230a06e58a6ffe, type: 3}
+  _hitParticleNormalOffset: 0.08
   _snapshotIntervalSec: 0.1
   _snapshotAngleThresholdDeg: 0.6
   _drawCollisionGizmo: 0

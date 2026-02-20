@@ -3732,6 +3732,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Check Point 0
       objectReference: {fileID: 0}
+    - target: {fileID: 6101023851071168765, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: cc7e85b48f7204542a249bf8713543f8, type: 2}
     - target: {fileID: 7050468779161132282, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -15991,6 +15995,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Check Point
       objectReference: {fileID: 0}
+    - target: {fileID: 6101023851071168765, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: cc7e85b48f7204542a249bf8713543f8, type: 2}
     - target: {fileID: 7050468779161132282, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -22907,6 +22915,10 @@ PrefabInstance:
       propertyPath: m_Enabled
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 6101023851071168765, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: cc7e85b48f7204542a249bf8713543f8, type: 2}
     - target: {fileID: 7050468779161132282, guid: c4d24fc2ce704c6459a205ecaafecacd, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0

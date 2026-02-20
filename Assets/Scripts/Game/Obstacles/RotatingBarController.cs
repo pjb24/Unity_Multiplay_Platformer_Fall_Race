@@ -99,6 +99,14 @@ public sealed class RotatingBarController : NetworkBehaviour
     // 피격 후 짧은 무적 시간(i-frame).
     [SerializeField] private float _invincibleAfterHitSec = 0.3f;
 
+    [Header("Hit VFX")]
+    // 플레이어 피격 시 생성할 파티클 프리팹.
+    [SerializeField] private GameObject _hitParticlePrefab;
+    // 파티클이 표면에 묻히지 않도록 노말 방향으로 이동시키는 거리.
+    [SerializeField] private float _hitParticleNormalOffset = 0.08f;
+    // 파티클 시스템이 없을 때 사용할 기본 제거 지연 시간.
+    [SerializeField] private float _hitParticleFallbackDestroyDelay = 2f;
+
     [Header("Sync")]
     // 스냅샷 최소 전송 간격.
     [SerializeField] private float _snapshotIntervalSec = 0.1f;
@@ -375,6 +383,7 @@ public sealed class RotatingBarController : NetworkBehaviour
         }
 
         uint tick = (uint)NetworkManager.NetworkTickSystem.ServerTime.Tick;
+        SpawnHitParticle(hitPoint, normal);
         OnBarHit?.Invoke(playerId, hitPoint, normal, tick);
         _onAnyBarHit?.Invoke();
 
@@ -555,6 +564,54 @@ public sealed class RotatingBarController : NetworkBehaviour
             angle += 360f;
 
         return angle;
+    }
+
+    /// <summary>
+    /// 피격 지점에 파티클 프리팹을 Instantiate 한다.
+    /// </summary>
+    private void SpawnHitParticle(Vector3 hitPoint, Vector3 hitNormal)
+    {
+        if (_hitParticlePrefab == null)
+            return;
+
+        Vector3 safeNormal = hitNormal.sqrMagnitude > 0.0001f ? hitNormal.normalized : Vector3.up;
+        Vector3 spawnPosition = hitPoint + safeNormal * Mathf.Max(0f, _hitParticleNormalOffset);
+        Quaternion spawnRotation = Quaternion.LookRotation(safeNormal);
+
+        // 생성된 파티클 인스턴스를 저장해 재생 종료 후 제거한다.
+        GameObject particleInstance = Instantiate(_hitParticlePrefab, spawnPosition, spawnRotation);
+        ScheduleParticleDestroy(particleInstance);
+    }
+
+    /// <summary>
+    /// 파티클 시스템의 재생 길이를 계산해 인스턴스를 자동 제거한다.
+    /// </summary>
+    private void ScheduleParticleDestroy(GameObject particleInstance)
+    {
+        if (particleInstance == null)
+            return;
+
+        // 파티클 컴포넌트가 없을 때 사용할 제거 대기 시간.
+        float destroyDelay = Mathf.Max(0.1f, _hitParticleFallbackDestroyDelay);
+        // 인스턴스 하위 포함 파티클 목록.
+        ParticleSystem[] particleSystems = particleInstance.GetComponentsInChildren<ParticleSystem>();
+
+        if (particleSystems.Length > 0)
+        {
+            destroyDelay = 0f;
+            foreach (ParticleSystem particleSystem in particleSystems)
+            {
+                // 개별 파티클 시스템의 최대 재생 시간(지속시간 + 수명)을 누적 반영한다.
+                var main = particleSystem.main;
+                float maxStartLifetime = main.startLifetime.constantMax;
+                float systemDuration = main.duration + maxStartLifetime;
+                destroyDelay = Mathf.Max(destroyDelay, systemDuration);
+            }
+
+            destroyDelay += 0.1f;
+        }
+
+        Destroy(particleInstance, destroyDelay);
     }
 
     /// <summary>

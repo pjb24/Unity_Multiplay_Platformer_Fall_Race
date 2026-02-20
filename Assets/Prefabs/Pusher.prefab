@@ -255,6 +255,8 @@ MonoBehaviour:
   _pushCooldownPerPlayer: 0.5
   _maxUpwardY: 2
   _knockbackControlLockSec: 0.2
+  _hitParticlePrefab: {fileID: 6424076732465889602, guid: a10ac89c5d671f5418230a06e58a6ffe, type: 3}
+  _hitParticleSpawnYOffset: 0.15
   _drawGizmos: 1
   _verboseLog: 0
   _onPlayerPushed:
