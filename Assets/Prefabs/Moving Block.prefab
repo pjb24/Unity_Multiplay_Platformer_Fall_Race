@@ -16,6 +16,7 @@ GameObject:
   - component: {fileID: 1170091844856674167}
   - component: {fileID: 6793065660211631899}
   - component: {fileID: 4732275835054773637}
+  - component: {fileID: -7087130761948990231}
   m_Layer: 8
   m_Name: Moving Block
   m_TagString: Untagged
@@ -161,7 +162,7 @@ MonoBehaviour:
   RotationInterpolationType: 1
   ScaleInterpolationType: 0
   PositionLerpSmoothing: 1
-  PositionMaxInterpolationTime: 0.1
+  PositionMaxInterpolationTime: 0.01
   RotationLerpSmoothing: 1
   RotationMaxInterpolationTime: 0.1
   ScaleLerpSmoothing: 1
@@ -235,3 +236,20 @@ MonoBehaviour:
   _dwellTimeAtPoint: 0.2
   _phaseOffsetSec: 0
   _drawGizmos: 1
+--- !u!114 &-7087130761948990231
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1848206434989400862}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f6c0be61502bb534f922ebb746851216, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.Components.NetworkRigidbody
+  ShowTopMostFoldoutHeaderGroup: 1
+  NetworkRigidbodyBaseExpanded: 0
+  UseRigidBodyForMotion: 1
+  AutoUpdateKinematicState: 0
+  AutoSetKinematicOnDespawn: 1

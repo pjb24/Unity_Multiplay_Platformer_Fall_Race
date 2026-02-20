@@ -489,7 +489,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
             if (shouldFall)
                 _fallStateLockedUntilGrounded = true;
 
-            UpdateMovementSfxState(false, 0f, _inputStrength > 0f);
+            // 비오너 클라이언트는 입력값을 가지지 않으므로 현재 속도로 이동 상태를 보정합니다.
+            bool hasMoveInputWhileAirborne = HasMovementForSfx();
+            UpdateMovementSfxState(false, 0f, hasMoveInputWhileAirborne);
             TriggerAnimatorState(shouldFall ? MotionAnimState.Fall : MotionAnimState.Jump);
             return;
         }
@@ -507,8 +509,9 @@ public sealed class PlayerMotorServer : NetworkBehaviour
         _isFalling = false;
         _wasAirborne = false;
         Vector3 horizontalVelocity = _rb != null ? new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z) : Vector3.zero;
-        
-        bool hasMoveInput = _inputStrength > 0f;
+
+        // 오너 입력값이 없는 비오너 클라이언트에서도 발소리가 재생되도록 속도 기반 보정을 포함합니다.
+        bool hasMoveInput = HasMovementForSfx();
         float runThreshold = Mathf.Max(_stopThreshold, _runSpeedThreshold);
         // 실제 이동 속도 기준으로만 run 상태를 판정해 방향 전환 시 run 재트리거가 가능하도록 합니다.
         bool isRunning = horizontalVelocity.magnitude >= runThreshold;
@@ -519,6 +522,23 @@ public sealed class PlayerMotorServer : NetworkBehaviour
 
         UpdateMovementSfxState(true, horizontalVelocity.magnitude, hasMoveInput);
         TriggerAnimatorState(isRunning ? MotionAnimState.Running : MotionAnimState.Idle);
+    }
+
+    /// <summary>
+    /// SFX 판정용 이동 여부를 입력 또는 실제 수평 속도 기준으로 계산합니다.
+    /// </summary>
+    private bool HasMovementForSfx()
+    {
+        // 오너 인스턴스에서 수신한 이동 입력 강도 기반 이동 여부입니다.
+        bool hasInputMovement = _inputStrength > 0f;
+        if (hasInputMovement)
+            return true;
+
+        // 네트워크 동기화된 Rigidbody 수평 속도 기반 이동 여부입니다.
+        Vector3 horizontalVelocity = _rb != null
+            ? new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z)
+            : Vector3.zero;
+        return horizontalVelocity.magnitude > _stopThreshold;
     }
 
     /// <summary>
